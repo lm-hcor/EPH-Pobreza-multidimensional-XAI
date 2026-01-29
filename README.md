@@ -42,4 +42,4 @@ Utilizando la librería `DALEX`, el proyecto se enfoca en: - **SHAP (Shapley Add
 **Autor:** Luis Miguel Herrera Corrales\
 **Contacto:** [lm.hcor\@gmail.com](mailto:lm.hcor@gmail.com) \| [GitHub](https://github.com/lm-hcor) \| [LinkedIn](https://www.linkedin.com/in/lmhcor)\
 **Licencia:** Apache 2.0\
-*Nota: Los datos provienen de la Encuesta Permanente de Hogares ([PH) del ](https://www.linkedin.com/in/lmhcor)INDEC bajo la Ley de Secreto Estadístico 17.622.*
+*Nota: Los datos provienen de la Encuesta Permanente de Hogares ([PH) del](https://www.linkedin.com/in/lmhcor)INDEC bajo la Ley de Secreto Estadístico 17.622.*
