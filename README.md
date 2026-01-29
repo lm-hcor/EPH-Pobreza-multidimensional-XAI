@@ -4,7 +4,7 @@
 
 ## 📌 Descripción del Proyecto
 
-Este repositorio contiene el desarrollo mi Trabajo de Fin de Máster (TFM), enfocado en identificar los factores que impulsan la pobreza multidimensional en Argentina. A diferencia de las mediciones tradicionales basadas únicamente en ingresos, este estudio adopta un enfoque holístico e interregional, utilizando algoritmos de **Machine Learning** y técnicas de **Inteligencia Artificial Explicable (XAI)**.
+Este repositorio contiene el desarrollo de mi Trabajo de Fin de Máster (TFM), enfocado en identificar los factores que impulsan la pobreza multidimensional en Argentina. A diferencia de las mediciones tradicionales basadas únicamente en ingresos, este estudio adopta un enfoque holístico e interregional, utilizando algoritmos de **Machine Learning** y técnicas de **Inteligencia Artificial Explicable (XAI)**.
 
 El objetivo central es desmenuzar la "caja negra" de los modelos predictivos para entender cómo varían los determinantes de la vulnerabilidad social según la región geográfica y el contexto macroeconómico.
 

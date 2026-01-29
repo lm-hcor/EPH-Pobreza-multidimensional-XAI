@@ -42,6 +42,27 @@ vignettes/*.pdf
 # pkgdown site
 docs/
 
+# --- EPH Project Specifics ---
+
+# Ignorar todos los datos (Raw, External, Processed)
+data/
+
+# Ignorar modelos entrenados (pesan mucho y se pueden regenerar con el código)
+output/models/
+*.rds
+
+# Ignorar archivos de datos comunes
+*.csv
+*.xlsx
+*.dta
+*.sav
+
+# Ignorar archivos temporales de RMarkdown
+*.log
+*.pdf
+*.html
+!README.md  # Aseguramos que el README sí se suba
+
 # translation temp files
 po/*~
 
