@@ -13,9 +13,11 @@ El objetivo central es desmenuzar la "caja negra" de los modelos predictivos par
 Para garantizar que el análisis sea apto para la toma de decisiones en políticas públicas, se implementaron los siguientes estándares:
 
 -   **Deflactación Regional:** Ajuste de ingresos nominales a pesos constantes utilizando el IPC regional del INDEC, permitiendo la comparabilidad temporal (2016-2025).
+-   **Ajuste geográfico:** Se aplicaron coeficientes de paridad regional para corregir el sesgo del promedio nacional en las líneas de pobreza.
 -   **Índice de Pobreza Multidimensional (IPM):** Construcción de una variable target basada en el método Alkire-Foster, integrando dimensiones de vivienda, saneamiento y educación.
 -   **Muestreo Complejo:** Uso de los factores de expansión (`PONDERA`) de la EPH para asegurar representatividad poblacional.
 -   **Validación Cruzada por Bloques:** Estrategia de split (Train/Test) estratificada por aglomerados para evitar el data leakage geográfico.
+-   **Validación Cruzada por Metodología:** Estrategia de split (Train/Test) entre periodos (2016-2024 ; 2025) para evitar el data leakage entre distintas metodologías del INDEC. *Nota:* Las EPH del periodo 2016-2024 se basan sobre el censo de 2010, mientras que las EPH del periodo 2025- se basan sobre el censo de 2022.
 
 ## 🤖 Modelos Comparados
 
