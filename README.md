@@ -12,16 +12,26 @@ El objetivo central es desmenuzar la "caja negra" de los modelos predictivos par
 
 Para garantizar que el análisis sea apto para la toma de decisiones en políticas públicas, se implementaron los siguientes estándares:
 
+-   **Análisis de Correspondencias Múltiples (MCA):** Dado que la pobreza se mide con categorías (ej: tipo de baño, nivel educativo), se utiliza el MCA como un paso previo esencial al modelado con los siguientes objetivos.
+
+    -   *Simplificación de datos:* Actúa como un "traductor" que agrupa variables similares, evitando que el modelo se confunda con información redundante.
+
+    -   *Selección inteligente de variables:* Los modelos se entrenan con las variables que el MCA identifica como las que realmente explican las diferencias entre hogares en cada año.
+
+    -   *Adaptación temporal:* Este análisis se realiza año a año, permitiendo que el modelo detecte si, por ejemplo, la falta de internet pesa más en la pobreza de 2024 que en la de 2016.
+
+<!-- -->
+
 -   **Deflactación Regional:** Ajuste de ingresos nominales a pesos constantes utilizando el IPC regional del INDEC, permitiendo la comparabilidad temporal (2016-2025).
 -   **Ajuste geográfico:** Se aplicaron coeficientes de paridad regional para corregir el sesgo del promedio nacional en las líneas de pobreza.
 -   **Índice de Pobreza Multidimensional (IPM):** Construcción de una variable target basada en el método Alkire-Foster, integrando dimensiones de vivienda, saneamiento y educación.
 -   **Muestreo Complejo:** Uso de los factores de expansión (`PONDERA`) de la EPH para asegurar representatividad poblacional.
 -   **Validación Cruzada por Bloques:** Estrategia de split (Train/Test) estratificada por aglomerados para evitar el data leakage geográfico.
--   **Validación Cruzada por Metodología:** Estrategia de split (Train/Test) entre periodos (2016-2024 ; 2025) para evitar el data leakage entre distintas metodologías del INDEC. *Nota:* Las EPH del periodo 2016-2024 se basan sobre el censo de 2010, mientras que las EPH del periodo 2025- se basan sobre el censo de 2022.
+-   **Validación Cruzada por Metodología:** Estrategia de split (Train/Test) entre periodos (2016-2024 ; 2025) para evitar el data leakage entre distintas metodologías del INDEC. *Nota:* Las EPH del periodo 2016-2024 se basan en el censo de 2010, mientras que las EPH del periodo 2025- se basan en el censo de 2022.
 
 ## 🤖 Modelos Comparados
 
-Se evalúa el desempeño y la interpretabilidad de tres arquitecturas: 1. **Árboles de Decisión (CART):** Para establecer reglas de clasificación base. 2. **Random Forest:** Para capturar interacciones robustas entre variables. 3. **XGBoost:** Optimización mediante gradiente para máxima precisión predictiva.
+El entrenamiento de los modelos no usa un listado fijo de variables. Está precedido por una etapa de selección basada en los resultados del MCA. Esto garantiza que cada algoritmo (XGBoost, Random Forest) trabaje solo con los indicadores más informativos y relevantes de cada periodo, mejorando la precisión y evitando el ruido estadístico. Después, se evalúa el desempeño y la interpretabilidad de tres arquitecturas: 1. **Árboles de Decisión (CART):** Para establecer reglas de clasificación base. 2. **Random Forest:** Para capturar interacciones robustas entre variables. 3. **XGBoost:** Optimización mediante gradiente para máxima precisión predictiva.
 
 ## 🔍 Análisis XAI (Interpretabilidad)
 
@@ -37,7 +47,7 @@ Utilizando la librería `DALEX`, el proyecto se enfoca en: - **SHAP (Shapley Add
 ## 🚀 Tecnologías Utilizadas
 
 -   **Lenguaje:** R v4.x
--   **Librerías Clave:** `tidyverse`, `tidymodels`, `eph`, `dalex`, `xgboost`, `randomForest`.
+-   **Librerías Clave:** `tidyverse`, `tidymodels`, `eph`, `dalex`, `xgboost`, `randomForest, FactoMineR (MCA), factoextra`
 
 ------------------------------------------------------------------------
 
