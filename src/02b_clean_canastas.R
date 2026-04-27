@@ -1,47 +1,32 @@
 # ==============================================================================
 # Proyecto: Pobreza Multidimensional en Argentina (ML + XAI)
 # Script: 02b_clean_canastas.R
-# Propósito: Descarga, Limpieza e Integración de las CBA y CBT del INDEC 
-#            (valores a promedio nacional de las canastas de pobreza)
+# Propósito: Descarga de CBA y CBT regionales via paquete {eph}
+#
+# ESTRUCTURA de get_poverty_lines(regional = TRUE):
+#   - CBA : canasta básica alimentaria en pesos por adulto equivalente
+#   - CBT : canasta básica total       en pesos por adulto equivalente
+#           (NO es el ICE — el paquete ya devuelve el valor monetario final)
 # ==============================================================================
 
-library(readxl)
+library(eph)
 library(tidyverse)
-library(lubridate)
 
-# 1. Leer el Excel (fuerza a que lea las columnas como texto para no perder nada)
-canastas_raw <- read_excel("data/external/canastas_indec.xls", 
-                           sheet = "CBA-CBT", 
-                           skip = 4,
-                           col_types = "text") # Leemos todo como texto primero
+canastas_raw <- get_poverty_lines(regional = TRUE)
 
-# 2. Limpieza y Conversión
-canastas_clean <- canastas_raw %>%
-  # Nos quedamos con las primeras 4 columnas y les damos nombre
-  select(1:4) %>%
-  setNames(c("mes_texto", "cba_nacional", "coef_engel", "cbt_nacional")) %>%
-  # Limpieza de valores
+canastas_nacionales <- canastas_raw |>
+  rename(REGION_LABEL = region, REGION = codigo) |>
   mutate(
-    # Quitamos espacios, comas por puntos y forzamos a numérico
-    cbt_nacional = as.numeric(gsub(",", ".", gsub("[^0-9,]", "", cbt_nacional))),
-    cba_nacional = as.numeric(gsub(",", ".", gsub("[^0-9,]", "", cba_nacional)))
-  ) %>%
-  # Eliminamos filas que no tengan datos tras la conversión
-  filter(!is.na(cbt_nacional)) %>%
-  mutate(
-    # Creamos la serie de fechas (ajustar fecha inicio si es necesario)
-    fecha = seq(as.Date("2016-04-01"), by = "month", length.out = n()),
-    ANO4 = year(fecha),
-    TRIMESTRE = quarter(fecha)
-  ) %>%
-  # 3. Promedio Trimestral (Ahora sí funcionará)
-  group_by(ANO4, TRIMESTRE) %>%
-  summarise(
-    cbt_nacional = mean(cbt_nacional, na.rm = TRUE),
-    cba_nacional = mean(cba_nacional, na.rm = TRUE),
-    .groups = "drop"
-  )
+    cba_regional = CBA,   # pesos por adulto equivalente — usar directamente
+    cbt_regional = CBT,   # pesos por adulto equivalente — usar directamente
+    ANO4         = as.integer(str_extract(periodo, "^[0-9]{4}")),
+    TRIMESTRE    = as.integer(str_extract(periodo, "[0-9]$"))
+  ) |>
+  select(ANO4, TRIMESTRE, REGION, REGION_LABEL, cba_regional, cbt_regional)
 
-# Guardar resultado
-saveRDS(canastas_clean, "data/processed/canastas_nacionales.rds")
-message(">>> Canastas procesadas correctamente sin warnings.")
+# Sanity check: 2020 T1 debe dar CBA ≈ 5.000-7.000 y CBT ≈ 12.000-18.000 ARS
+cat("Sanity check 2020 T1:\n")
+canastas_nacionales |> filter(ANO4 == 2020, TRIMESTRE == 1) |> print()
+
+saveRDS(canastas_nacionales, "data/processed/canastas_nacionales.rds")
+message("✓ Canastas guardadas: ", nrow(canastas_nacionales), " filas.")

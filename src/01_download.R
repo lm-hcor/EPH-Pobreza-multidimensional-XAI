@@ -13,7 +13,7 @@ source("src/00_utils.R")
 # 1. Definir los periodos a descargar
 # ------------------------------------------------------------------------------
 # Usamos las variables definidas en 00_utils
-anios <- año_inicio:año_fin
+anios <- anio_inicio:anio_fin
 trimestres <- 1:4
 
 # 2. Función de descarga con control de existencia local

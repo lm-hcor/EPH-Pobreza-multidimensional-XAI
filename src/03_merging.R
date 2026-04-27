@@ -1,109 +1,217 @@
 # ==============================================================================
 # Proyecto: Pobreza Multidimensional en Argentina (ML + XAI)
 # Script: 03_merging.R
-# Propósito: Unir EPH (Hog + Ind), IPC y Canastas con Ajuste Regional
+# Propósito: Unir EPH (Hogar + Individual), IPC y Canastas con ajuste regional
+#
+# NOTAS:
+#   - clean_names() se aplica INMEDIATAMENTE al leer cada archivo crudo.
+#     El paquete {eph} puede entregar nombres en mayúsculas o minúsculas según
+#     la versión instalada. Normalizar antes del select() garantiza que
+#     any_of(VARS_HOGAR) — que ahora está en minúsculas en 00_utils.R —
+#     siempre encuentre las columnas de vivienda (iv3, iv4, iv6, etc.).
+#   - Se añade un chequeo explícito post-carga para detectar columnas faltantes
+#     críticas antes de que el pipeline falle en pasos posteriores.
+#   - Se elimina el duplicado "II3" en VARS_HOGAR (estaba dos veces en v1).
 # ==============================================================================
 
 library(tidyverse)
+library(janitor)       # clean_names()
+source("src/00_utils.R")
 
-# 0. Carga de datos auxiliares procesados en pasos anteriores
-ipc_trimestral <- readRDS("data/processed/ipc_trimestral.rds")
+# 0. Carga de datos auxiliares
+# ------------------------------------------------------------------------------
+ipc_trimestral      <- readRDS("data/processed/ipc_trimestral.rds")
 canastas_nacionales <- readRDS("data/processed/canastas_nacionales.rds")
 
-# 1. Listamos las rutas de bases raw
-archivos <- list.files("data/raw", full.names = TRUE)
+# Lista de archivos RDS descargados por 01_download.R
+archivos <- list.files("data/raw", full.names = TRUE, pattern = "\\.rds$")
 
-# ******************************************************************************
-#                          Unión de bases INDIVIDUAL Y HOGAR
-# ******************************************************************************
-# 2. Carga y unión de bases INDIVIDUALES
-message(">>> Cargando bases individuales...")
+# 1. Carga y Cálculo de Adulto Equivalente (base Individual)
+# ------------------------------------------------------------------------------
+message(">>> Procesando base individual y adulto equivalente (ADEQ)...")
+
 eph_indiv_all <- archivos[str_detect(archivos, "individual")] %>%
-  map_df(~ {
-    readRDS(.x) %>% mutate(across(everything(), as.character))
+  map_df(function(f) {
+    readRDS(f) %>%
+      # CORRECCIÓN: normalizar nombres ANTES del select para que VARS_INDIVIDUAL
+      # (en minúsculas) siempre encuentre las columnas correctamente.
+      janitor::clean_names() %>%
+      select(any_of(VARS_INDIVIDUAL)) %>%
+      mutate(across(everything(), as.character))
   }) %>%
   type_convert()
 
-# 3. Carga y unión de bases HOGAR
-message(">>> Cargando bases hogar...")
+# Calcular coeficiente de adulto equivalente por persona y luego sumar por hogar
+adeq_hogar <- eph_indiv_all %>%
+  mutate(adeq_i = calcular_adeq_individual(ch04, ch06)) %>%
+  group_by(codusu, nro_hogar, ano4, trimestre) %>%
+  summarise(adeq_hogar = sum(adeq_i, na.rm = TRUE), .groups = "drop")
+
+message("  ADEQ calculado para ", nrow(adeq_hogar), " hogares.")
+
+# 2. Carga de base Hogar
+# ------------------------------------------------------------------------------
+message(">>> Procesando base hogar...")
+
 eph_hogar_all <- archivos[str_detect(archivos, "hogar")] %>%
-  map_df(~ {
-    readRDS(.x) %>% mutate(across(everything(), as.character))
+  map_df(function(f) {
+    readRDS(f) %>%
+      # CORRECCIÓN: normalizar nombres ANTES del select.
+      janitor::clean_names() %>%
+      select(any_of(VARS_HOGAR)) %>%
+      mutate(across(everything(), as.character))
   }) %>%
   type_convert()
 
-# 4. Limpieza de duplicados antes del Merge
-# Identificamos columnas repetidas (excepto las llaves) para evitar el caos de .X y .Y
-col_repetidas <- intersect(names(eph_indiv_all), names(eph_hogar_all))
-llaves <- c("CODUSU", "NRO_HOGAR", "ANO4", "TRIMESTRE", "REGION")
-col_a_eliminar_hogar <- setdiff(col_repetidas, llaves)
+# Verificación temprana: columnas de vivienda críticas para el MPI
+vars_vivienda_criticas <- c("iv3", "iv4", "iv6", "iv11", "iv12_1", "ii1", "ix_tot")
+faltantes_hogar <- setdiff(vars_vivienda_criticas, names(eph_hogar_all))
+if (length(faltantes_hogar) > 0) {
+  stop(
+    "ERROR en 03_merging: las siguientes columnas de vivienda no fueron ",
+    "encontradas en los archivos crudos de hogar: ",
+    paste(faltantes_hogar, collapse = ", "),
+    "\n  → Verifica que VARS_HOGAR en 00_utils.R coincide con los nombres ",
+    "que entrega get_microdata() en tu versión del paquete {eph}."
+  )
+}
+message("  Columnas de vivienda críticas presentes: OK")
 
-# 5. Unión de ambas (Hogar + Individual)
+# 3. Merge Individual + Hogar y estandarización de llaves
+# ------------------------------------------------------------------------------
+# Notar que pondera viene de ambas bases; renombramos la del hogar para
+# conservar ambas si fuera necesario y evitar ambigüedad en joins posteriores.
+llaves <- c("codusu", "nro_hogar", "ano4", "trimestre", "region", "aglomerado")
+
 eph_unida <- eph_indiv_all %>%
-  left_join(eph_hogar_all %>% select(-all_of(col_a_eliminar_hogar)), 
-            by = llaves)
+  left_join(
+    eph_hogar_all %>%
+      rename(pondera_hogar = pondera) %>%   # renombrar para evitar colisión
+      select(all_of(llaves), pondera_hogar, any_of(VARS_HOGAR)),
+    by = llaves
+  ) %>%
+  mutate(
+    ano4      = as.numeric(ano4),
+    trimestre = as.numeric(trimestre)
+  )
 
-# ******************************************************************************
-# Bloque de Integración: IPC + Canastas + Regiones
-# ******************************************************************************
+message("  Filas tras merge individual-hogar: ", nrow(eph_unida))
 
-# 6. Definición de Ponderadores Regionales (Ajuste de costo de vida)
-# Nos aseguramos de que los nombres de las llaves estén en MAYÚSCULAS
-ponderadores_regiones <- data.frame(
-  REGION = c(1, 40, 41, 42, 43, 44),
-  REGION_LABEL = c("GBA", "Noroeste", "Noreste", "Cuyo", "Pampeana", "Patagonia"),
-  COEF_REGIONAL = c(1.00, 0.91, 0.92, 0.95, 1.02, 1.22)
+# 4. Ponderadores Regionales
+# ------------------------------------------------------------------------------
+ponderadores_regiones <- tibble(
+  region        = c(1L, 40L, 41L, 42L, 43L, 44L),
+  region_label  = c("GBA", "Noroeste", "Nordeste", "Cuyo", "Pampeana", "Patagonia"),
+  coef_regional = c(1.00, 0.91, 0.92, 0.95, 1.02, 1.22)
 )
 
-# 7. Unión Final, Deflactación y Etiquetado
+# 5. Preparación de tablas auxiliares para los joins
+# ------------------------------------------------------------------------------
+
+# IPC trimestral: una fila por region_label + ano4 + trimestre
+ipc_limpio <- ipc_trimestral %>%
+  janitor::clean_names() %>%
+  mutate(
+    ano4      = as.numeric(ano4),
+    trimestre = as.numeric(trimestre)
+  )
+# Columnas resultantes: ano4, trimestre, region_label, valor_ipc
+
+# Canastas: join por region (numérico) + ano4 + trimestre
+# Excluimos region_label de canastas para evitar sufijos _x/_y al joinear;
+# region_label vendrá de ponderadores_regiones (fuente canónica).
+canastas_limpio <- canastas_nacionales %>%
+  janitor::clean_names() %>%
+  mutate(
+    ano4      = as.numeric(ano4),
+    trimestre = as.numeric(trimestre),
+    region    = as.numeric(region)
+  ) %>%
+  select(ano4, trimestre, region, cba_regional, cbt_regional)
+
+# 6. Integración Final
+# ------------------------------------------------------------------------------
+message(">>> Integrando IPC, Canastas y ADEQ...")
+
 eph_final <- eph_unida %>%
-  # PASO CLAVE: Todo a mayúsculas antes de empezar los joins
-  rename_with(toupper) %>% 
+  # Join 1: ponderadores → añade region_label y coef_regional
+  left_join(ponderadores_regiones, by = "region") %>%
   
-  # Unimos con Ponderadores (REGION ya está en mayúsculas en ambos)
-  left_join(ponderadores_regiones, by = "REGION") %>%
+  # Join 2: IPC → por ano4 + trimestre + region_label
+  left_join(ipc_limpio, by = c("ano4", "trimestre", "region_label")) %>%
   
-  # Unimos con IPC (asegurando que las llaves del IPC también coincidan)
-  left_join(ipc_trimestral %>% rename_with(toupper), 
-            by = c("ANO4", "TRIMESTRE", "REGION_LABEL")) %>%
+  # Join 3: canastas → por ano4 + trimestre + region (sin many-to-many)
+  left_join(canastas_limpio, by = c("ano4", "trimestre", "region")) %>%
   
-  # Unimos con Canastas (asegurando mayúsculas en las llaves)
-  left_join(canastas_nacionales %>% rename_with(toupper), 
-            by = c("ANO4", "TRIMESTRE")) %>%
+  # Join 4: adulto equivalente del hogar
+  left_join(adeq_hogar, by = c("codusu", "nro_hogar", "ano4", "trimestre")) %>%
   
   mutate(
-    # 1. Ingresos Nominales y Reales
-    # Usamos ITF que ya está en mayúsculas por el rename_with anterior
-    ingreso_hogar_nom = as.numeric(ITF),
-    p21_real = (as.numeric(P21) / VALOR_IPC) * 100,
-    itcf_real = (ingreso_hogar_nom / VALOR_IPC) * 100,
+    # Guardia contra NA y división por cero en el IPC
+    valor_ipc    = if_else(is.na(valor_ipc) | valor_ipc <= 0, 100, valor_ipc),
+    cbt_regional = as.numeric(cbt_regional),
+    cba_regional = as.numeric(cba_regional),
+    itf          = as.numeric(itf),
+    adeq_hogar   = if_else(is.na(adeq_hogar) | adeq_hogar <= 0, 1, adeq_hogar),
     
-    # 2. Ajuste Regional de Canastas
-    cbt_regional = CBT_NACIONAL * COEF_REGIONAL,
-    cba_regional = CBA_NACIONAL * COEF_REGIONAL,
+    # Canasta nominal del hogar = canasta por AE × coeficiente regional × AE del hogar
+    cbt_nominal_hogar = cbt_regional * coef_regional * adeq_hogar,
+    cba_nominal_hogar = cba_regional * coef_regional * adeq_hogar,
     
-    # 3. Creación de Variable Target
-    es_pobre = ifelse(ingreso_hogar_nom < cbt_regional, 1, 0),
-    es_indigente = ifelse(ingreso_hogar_nom < cba_regional, 1, 0),
+    # Pobreza monetaria (comparación nominal para evitar doble deflación)
+    es_pobre_mon     = as.integer(itf < cbt_nominal_hogar),
+    es_indigente_mon = as.integer(itf < cba_nominal_hogar),
     
-    # 4. Marca de tiempo
-    periodo = as.Date(paste0(ANO4, "-", (as.numeric(TRIMESTRE)*3-2), "-01"))
+    # Deflactor e ingresos reales (base = fecha_base_ipc, valor_ipc = 100 en esa fecha)
+    deflactor    = valor_ipc / 100,
+    itcf_real    = itf / deflactor,
+    cbt_real_reg = cbt_nominal_hogar / deflactor,
+    p21_real     = as.numeric(p21) / deflactor,
+    
+    # Período como fecha para posibles análisis de series temporales
+    periodo = as.Date(paste0(ano4, "-", (as.numeric(trimestre) * 3 - 2), "-01"))
   ) %>%
-  # Filtramos registros vitales
-  filter(!is.na(VALOR_IPC), !is.na(itcf_real), !is.na(es_pobre))
+  # Filtrar registros sin peso muestral (no representativos)
+  filter(!is.na(pondera))
 
-# ******************************************************************************
-#                      Guardado y chequeo
-# ******************************************************************************
-# 8. Guardar el trabajo finalizado
+message("  Filas en eph_final: ", nrow(eph_final))
+
+# 7. Guardado
+# ------------------------------------------------------------------------------
 saveRDS(eph_final, "data/processed/eph_final.rds")
 
-message("¡Felicidades! Step 03 completado con éxito.")
-message("Registros totales: ", nrow(eph_final))
-message("Variables listas para el Step 04: itcf_real, es_pobre, cbt_regional")
+# ==============================================================================
+# VERIFICACIONES DE CONSISTENCIA
+# ==============================================================================
+message("\n--- REPORTES DE CONSISTENCIA ---")
 
-# Verificación rápida
-eph_final %>% 
-  group_by(REGION_LABEL) %>% 
-  summarise(pobreza_promedio = mean(es_pobre)) %>% 
-  print()
+message("\nCBT promedio por año (debe crecer con la inflación):")
+print(
+  eph_final %>%
+    group_by(ano4) %>%
+    summarise(cbt_promedio = mean(cbt_regional, na.rm = TRUE)) %>%
+    head(10)
+)
+
+message("\nDistribución de Pobreza Monetaria (no debe ser todo 1):")
+print(table(eph_final$es_pobre_mon, useNA = "ifany"))
+
+message("\nResumen ITCF real vs Canasta real:")
+print(summary(eph_final$itcf_real))
+print(summary(eph_final$cbt_real_reg))
+
+message("\nResumen Adulto Equivalente por hogar:")
+print(summary(eph_final$adeq_hogar))
+
+# Verificación de que las columnas de vivienda llegaron al dataset final
+vars_check <- c("iv3", "iv4", "iv6", "iv11", "iv12_1", "ii1", "ix_tot")
+presentes  <- intersect(vars_check, names(eph_final))
+ausentes   <- setdiff(vars_check, names(eph_final))
+message("\nVariables de vivienda en eph_final: ",
+        length(presentes), "/", length(vars_check))
+if (length(ausentes) > 0) {
+  warning("ATENCIÓN: faltan columnas de vivienda en eph_final: ",
+          paste(ausentes, collapse = ", "))
+}
+
+message("\n✅ Step 03 completado.")

@@ -1,49 +1,56 @@
 # ==============================================================================
-# PROYECTO: Análisis Multidimensional de la Pobreza (EPH Argentina)
-# OBJETIVO: Script Maestro de Ejecución (Pipeline Automatizado)
-# UBICACIÓN: Raíz del Proyecto
-# AUTOR: Luis Miguel Herrera Corrales
-# LICENCIA: Apache 2.0
+# Proyecto: Pobreza Multidimensional Argentina
+# Propósito: Ejecución INTEGRAL basada en la estructura de archivos src/
+# Autor: Luis Miguel Herrera Corrales
+# Licencia: Apache 2.0
 # ==============================================================================
 
-# 0. Configuración del Entorno --------------------------------------------
-options(scipen = 999) # Evitar notación científica en los resultados
-message(">>> Iniciando Pipeline Profesional EPH...")
+library(tidyverse)
+library(tidymodels)
+library(doParallel)
 
-# Carga de librerías esenciales
-libs <- c("tidyverse", "data.table", "parallel")
-invisible(lapply(libs, library, character.only = TRUE))
+# 0. OPTIMIZACIÓN DE RECURSOS
+all_cores <- parallel::detectCores(logical = FALSE)
+registerDoParallel(cores = all_cores)
 
-# 1. Ejecución Secuencial del Proyecto ------------------------------------
+message("🚀 Iniciando Pipeline TOTAL: ", Sys.time())
 
-# 00: Funciones auxiliares y configuración global
+# --- FASE 1: PREPARACIÓN Y LIMPIEZA ---
 source("src/00_utils.R")
+source("src/01_download.R")       # Carga de microdatos EPH
+source("src/02_clean_ipc.R")      # Índices de precios
+source("src/02b_clean_canastas.R") # Canastas regionales CBA/CBT
+message("✅ Fase 1 completada: Datos base y canastas listos.")
 
-# 01: Descarga de microdatos (o verificación de archivos locales)
-source("src/01_download.R")
+# --- FASE 2: PROCESAMIENTO ---
+source("src/03_merging.R")        # Unión EPH + Canastas + IPC
+source("src/03b_exploratory_analysis.R") # Verificación de distribuciones
+message("✅ Fase 2 completada: Dataset unido y verificado.")
 
-# 02: Procesamiento de IPC y Canastas (Deflactación regional)
-source("src/02_clean_ipc.R")
-source("src/02b_clean_canastas.R")
+# --- FASE 3: INGENIERÍA Y MODELADO ---
+# Aquí se crean las nuevas variables de vulnerabilidad
+source("src/04_feature_engineering.R") 
+message("✅ Fase 3: Variables de vulnerabilidad y Target MPI creados.")
 
-# 03: Unión de bases Individual y Hogar + Cruce con Canastas
-source("src/03_merging.R")
+# Cálculo de dimensiones estructurales
+source("src/05_mca_feature_selection.R")
+message("✅ Fase 4: MCA finalizado.")
 
-# 04: Ingeniería de Variables y Segmentación Metodológica (HOY)
-# Aquí es donde separamos 2016-2024 de 2025 y creamos los predictores
- source("src/04_feature_engineering.R")
+# Entrenamiento de modelos (CART, RF, XGBoost) con proyección real al Test
+source("src/06b_optimized_modelling.R")
+message("✅ Fase 5: Modelos entrenados y evaluados.")
 
-# 05: Modelado de Machine Learning (PRÓXIMO PASO)
-# source("src/05_modelado_ml.R")
+# --- FASE 4: EXPLICABILIDAD (XAI) ---
+source("src/07_xai.R")
+message("✅ Fase 6: Análisis SHAP y explicabilidad finalizados.")
 
-# 2. Verificación Final ---------------------------------------------------
+# --- CIERRE ---
+stopImplicitCluster()
 
-if (exists("eph_final")) {
-  message(">>> [OK] Pipeline ejecutado hasta Step 04.")
-  message(">>> Registros totales: ", nrow(eph_final))
-  message(">>> Periodos detectados: ", paste(unique(eph_final$periodo), collapse = ", "))
-} else {
-  warning(">>> [ERROR] El dataset final no se encuentra en memoria.")
+if(exists("tabla_resultados")) {
+  message("\n📊 RENDIMIENTO DEL MODELO (Test Set):")
+  print(tabla_resultados)
 }
 
-message(">>> Listo para el Step 05: Modelado de Machine Learning.")
+message("\n🏁 Pipeline finalizado con éxito: ", Sys.time())
+message("Puedes proceder a cargar los .rds en la App Shiny.")
