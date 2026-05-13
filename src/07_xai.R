@@ -507,3 +507,183 @@ tabla_shap_regional %>%
 # 8. PDP: EFECTOS MARGINALES DE VARIABLES CRÍTICAS
 # ==============================================================================
 message(">>> Calculando PDPs...")
+
+vars_pdp_tecnicas <- c("itcf_real", "ratio_dependencia",
+                       "max_instruccion", "n_menores", "mca_dim2")
+vars_pdp <- intersect(vars_pdp_tecnicas, PREDICTORES)
+
+pdp_xgb <- model_profile(
+  explainer_xgb,
+  variables = vars_pdp,
+  N         = 500,
+  type      = "partial"
+)
+
+# Renombrar variables en el objeto PDP para el gráfico
+pdp_xgb$agr_profiles$`_vname_` <- ifelse(
+  pdp_xgb$agr_profiles$`_vname_` %in% names(ETIQUETAS_VARS),
+  ETIQUETAS_VARS[pdp_xgb$agr_profiles$`_vname_`],
+  pdp_xgb$agr_profiles$`_vname_`
+)
+
+p_pdp <- plot(pdp_xgb) +
+  ggtitle("Partial Dependence Plots — XGBoost",
+          subtitle = "Efecto marginal promedio de cada variable sobre P(MPI-pobre)") +
+  theme_minimal(base_size = 11)
+
+ggsave("output/figures/pdp_xgboost.png",
+       p_pdp, width = 12, height = 8, dpi = 150)
+message("  PDPs guardados.")
+
+# ==============================================================================
+# 9. BREAK-DOWN: TRES HOGARES TIPO DEL TEST SET 2025
+# ==============================================================================
+# Criterios de selección:
+#   - Pobre típico:  hogar con P(pobre) máxima — el modelo está más seguro
+#   - Frontera:      hogar cuya P(pobre) más se aproxima al umbral calibrado
+#   - No pobre:      hogar con P(pobre) mínima — el modelo está más seguro
+# ==============================================================================
+message(">>> Calculando Break-down para 3 hogares tipo...")
+
+# Predicciones sobre el test set completo
+preds_test_prob <- predict(
+  fit_xgb,
+  hogar_test_xai %>%
+    select(any_of(c(PREDICTORES, "codusu", "grupo_cv"))),
+  type = "prob"
+)$.pred_pobre
+
+message("  Distribución probabilidades test:")
+message("  Min: ", round(min(preds_test_prob), 3),
+        " | Mediana: ", round(median(preds_test_prob), 3),
+        " | Max: ", round(max(preds_test_prob), 3))
+
+# Índices de los tres hogares tipo
+idx_pobre_tipico <- which.max(preds_test_prob)
+idx_no_pobre     <- which.min(preds_test_prob)
+idx_frontera     <- which.min(abs(preds_test_prob - umbral_xgb))
+
+indices_bd <- list(
+  "Pobre típico"    = idx_pobre_tipico,
+  "Caso frontera"   = idx_frontera,
+  "No pobre típico" = idx_no_pobre
+)
+
+message("  Probabilidades seleccionadas:")
+for (nm in names(indices_bd)) {
+  message("    ", nm, ": P = ",
+          round(preds_test_prob[indices_bd[[nm]]], 3))
+}
+
+# Dataset de test con etiquetas para el explainer de Break-down
+hogar_test_xai_labels <- hogar_test_xai %>%
+  select(all_of(PREDICTORES)) %>%
+  renombrar_con_etiquetas()
+
+# Crear explainer sobre el test set con etiquetas
+explainer_xgb_test <- explain_tidymodels(
+  model            = fit_xgb,
+  data             = hogar_test_xai %>% select(all_of(PREDICTORES)),
+  y                = as.numeric(hogar_test_xai$mpi_pobre == "pobre"),
+  label            = "XGBoost",
+  predict_function = predict_fn,
+  verbose          = FALSE
+)
+
+# Calcular y guardar Break-down para cada hogar tipo
+bd_resultados <- imap(indices_bd, function(idx, nombre) {
+  
+  prob_hogar <- round(preds_test_prob[idx], 3)
+  clasificacion <- if_else(prob_hogar >= umbral_xgb, "POBRE", "NO POBRE")
+  
+  message("  Break-down: ", nombre,
+          " | P = ", prob_hogar,
+          " | Clasificación: ", clasificacion)
+  
+  # Observación con etiquetas para el gráfico
+  obs_labels <- hogar_test_xai[idx, ] %>%
+    select(all_of(PREDICTORES)) %>%
+    renombrar_con_etiquetas()
+  
+  # Break-down sobre el explainer con etiquetas
+  bd <- predict_parts(
+    explainer        = explainer_xgb_test,
+    new_observation  = hogar_test_xai[idx, PREDICTORES],
+    type             = "break_down"
+  )
+  
+  # Renombrar variables en el objeto break-down
+  bd$variable_name <- ifelse(
+    bd$variable_name %in% names(ETIQUETAS_VARS),
+    ETIQUETAS_VARS[bd$variable_name],
+    bd$variable_name
+  )
+  bd$variable <- ifelse(
+    bd$variable %in% names(ETIQUETAS_VARS),
+    paste0(ETIQUETAS_VARS[bd$variable_name],
+           " = ", bd$variable_value),
+    bd$variable
+  )
+  
+  p_bd <- plot(bd) +
+    ggtitle(
+      paste0("Contribución Individual (Break-down) — ", nombre),
+      subtitle = paste0(
+        "XGBoost | P(MPI-pobre) = ", prob_hogar,
+        " | Umbral = ", umbral_xgb,
+        " | Clasificación: ", clasificacion
+      )
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      plot.title    = element_text(face = "bold", size = 13),
+      plot.subtitle = element_text(size = 10, color = "grey40")
+    )
+  
+  # Guardar figura
+  nombre_archivo <- tolower(
+    str_replace_all(nombre, " ", "_") %>%
+      stringi::stri_trans_general("Latin-ASCII")
+  )
+  ggsave(
+    filename = paste0("output/figures/breakdown_", nombre_archivo, ".png"),
+    plot     = p_bd,
+    width    = 11, height = 7, dpi = 150
+  )
+  
+  list(bd = bd, plot = p_bd, prob = prob_hogar,
+       clasificacion = clasificacion, idx = idx)
+})
+
+# Panel comparativo de los tres Break-down
+p_bd_panel <- (bd_resultados[["Pobre típico"]]$plot /
+                 bd_resultados[["Caso frontera"]]$plot /
+                 bd_resultados[["No pobre típico"]]$plot) +
+  plot_annotation(
+    title   = "Break-down: Tres Hogares Tipo — XGBoost",
+    caption = paste0("Umbral de clasificación calibrado: ", umbral_xgb,
+                     " (J-index / F1 OOF)")
+  )
+
+ggsave("output/figures/breakdown_panel_tres_hogares.png",
+       p_bd_panel, width = 12, height = 20, dpi = 150)
+message("  Break-down panel guardado.")
+
+# ==============================================================================
+# 10. GUARDADO FINAL
+# ==============================================================================
+message(">>> Guardando resultados XAI...")
+
+saveRDS(shap_cart,           "output/results/shap_cart.rds")
+saveRDS(shap_rf,             "output/results/shap_rf.rds")
+saveRDS(shap_xgb,            "output/results/shap_xgb.rds")
+saveRDS(shap_por_region,     "output/results/shap_por_region.rds")
+saveRDS(tabla_shap_regional, "output/results/shap_regional_top5.rds")
+saveRDS(pdp_xgb,             "output/results/pdp_xgboost.rds")
+saveRDS(bd_resultados,       "output/results/breakdown_hogares_tipo.rds")
+saveRDS(preds_test_prob,     "output/results/preds_test_xgb.rds")
+saveRDS(ETIQUETAS_VARS,      "output/results/etiquetas_vars.rds")
+
+message("✓ Step 07 (XAI) completado.")
+message("  Figuras en: output/figures/")
+message("  Resultados en: output/results/")

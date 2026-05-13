@@ -44,6 +44,10 @@ message("✅ Fase 5: Modelos entrenados y evaluados.")
 source("src/07_xai.R")
 message("✅ Fase 6: Análisis SHAP y explicabilidad finalizados.")
 
+# --- FASE 5: Gráficos
+source("src/08_graphs.R")
+message("✅ Fase 6Análisis SHAP y explicabilidad finalizados.")
+
 # --- CIERRE ---
 stopImplicitCluster()
 

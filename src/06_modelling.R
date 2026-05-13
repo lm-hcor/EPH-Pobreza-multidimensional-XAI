@@ -1,6 +1,6 @@
 # ==============================================================================
 # Proyecto: Pobreza Multidimensional en Argentina (ML + XAI)
-# Script: 06b_optimized_modelling.R
+# Script: 06_modelling.R
 # Propósito: Pipeline de Machine Learning con tidymodels
 #
 # CORRECCIONES RESPECTO A LA VERSIÓN ANTERIOR:
