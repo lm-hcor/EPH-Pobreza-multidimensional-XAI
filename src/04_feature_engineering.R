@@ -3,7 +3,7 @@
 # Script: 04_feature_engineering.R
 # Propósito: Feature Engineering + Construcción del MPI Alkire-Foster
 #
-# NOTAS:
+# CORRECCIONES (v2):
 #   1. Diagnóstico explícito al inicio: imprime los nombres de eph_final para
 #      detectar a tiempo si alguna columna de vivienda falta antes del guard.
 #   2. El guard de variables_necesarias se ejecuta ANTES de cualquier
@@ -11,8 +11,9 @@
 #   3. Bug priv_salud: la privación de salud debe usar ch10 (cobertura de
 #      salud del individuo), NO ch06 (edad). Se corrige la lógica.
 #   4. Se añaden comentarios que explican cada decisión metodológica.
-#
-# BUGS RESUELTOS PREVIAMENTE:
+#   5. Se divide en 2016-2023 train set, 2024 como test set, validación temporal
+#      y 2025 como validación externa para aislar el impacto del cambio censal
+# BUGS RESUELTOS PREVIAMENTE (conservados):
 #   1. es_pobre_mon / es_indigente_mon: usar first() porque son vars de hogar.
 #   2. p21_real con max() → ahora sum() para ingreso total del hogar.
 #   3. region_label duplicada (_x / _y): se resuelve con rename() explícito.
@@ -193,73 +194,73 @@ if (length(missing_vars) > 0) {
 }
 message("  Variables para construir_mpi(): OK")
 
-# 4.5 Imputación multivariante con MICE
-# ------------------------------------------------------------------------------
-# La imputación por mediana ignora las relaciones entre variables.
-# MICE modela cada variable faltante condicionando en las demás, produciendo
-# imputaciones más coherentes con la estructura multivariante del dataset.
-# Se usa m = 1 (una sola imputación) porque el objetivo es preparar un dataset
-# único para el pipeline ML, no propagar incertidumbre de imputación.
-# Referencia: van Buuren & Groothuis-Oudshoorn (2011), Journal of Statistical Software.
-# ------------------------------------------------------------------------------
-vars_imputar <- c(
-  # Variables del MPI
-  "iv3", "iv4", "iv6", "iv11", "iv12_1", "ii1", "ix_tot",
-  # Variables educativas
-  "nivel_ed_jefe", "priv_asistencia_esc",
-  # Variables económicas
-  "itcf_real", "p21_real", "adeq_hogar",
-  # Variables demográficas
-  "tamano_hogar", "n_menores", "n_ancianos", "n_ocupados",
-  "ratio_dependencia", "max_instruccion", "prop_informal"
-)
-
-# Filtrar solo las que existen en eph_hogar Y tienen NAs
-vars_con_na <- vars_imputar %>%
-  keep(~ .x %in% names(eph_hogar) &&
-         sum(is.na(eph_hogar[[.x]])) > 0)
-
-message("  Variables con NAs para MICE: ", length(vars_con_na))
-message("  ", paste(vars_con_na, collapse = ", "))
-
-if (length(vars_con_na) > 0) {
-  
-  # Subconjunto para MICE: solo variables relevantes
-  # MICE es O(n × p²) — incluir todas las columnas lo haría inviable
-  df_mice_input <- eph_hogar %>%
-    select(all_of(vars_con_na))
-  
-  set.seed(42)
-  imp <- mice(
-    df_mice_input,
-    m         = 1,      # una sola imputación
-    maxit     = 5,      # 5 iteraciones de cadenas
-    method    = "pmm",  # predictive mean matching
-    printFlag = FALSE   # suprimir output verboso
-  )
-  
-  df_imputado <- complete(imp, action = 1)
-  
-  # Verificación: no deben quedar NAs
-  nas_restantes <- sum(is.na(df_imputado))
-  if (nas_restantes > 0) {
-    warning("MICE dejó ", nas_restantes, " NAs — se imputarán con mediana.")
-    df_imputado <- df_imputado %>%
-      mutate(across(everything(),
-                    ~ if_else(is.na(.x),
-                              median(.x, na.rm = TRUE), .x)))
-  }
-  
-  message("  MICE completado. NAs restantes: ", sum(is.na(df_imputado)))
-  
-  # Reemplazar columnas imputadas en eph_hogar
-  eph_hogar <- eph_hogar %>%
-    select(-all_of(vars_con_na)) %>%
-    bind_cols(df_imputado)
-  
-} else {
-  message("  No hay NAs en las variables relevantes — MICE omitido.")
-}
+# # 4.5 Imputación multivariante con MICE
+# # ------------------------------------------------------------------------------
+# # La imputación por mediana ignora las relaciones entre variables.
+# # MICE modela cada variable faltante condicionando en las demás, produciendo
+# # imputaciones más coherentes con la estructura multivariante del dataset.
+# # Se usa m = 1 (una sola imputación) porque el objetivo es preparar un dataset
+# # único para el pipeline ML, no propagar incertidumbre de imputación.
+# # Referencia: van Buuren & Groothuis-Oudshoorn (2011), Journal of Statistical Software.
+# # ------------------------------------------------------------------------------
+# vars_imputar <- c(
+#   # Variables del MPI
+#   "iv3", "iv4", "iv6", "iv11", "iv12_1", "ii1", "ix_tot",
+#   # Variables educativas
+#   "nivel_ed_jefe", "priv_asistencia_esc",
+#   # Variables económicas
+#   "itcf_real", "p21_real", "adeq_hogar",
+#   # Variables demográficas
+#   "tamano_hogar", "n_menores", "n_ancianos", "n_ocupados",
+#   "ratio_dependencia", "max_instruccion", "prop_informal"
+# )
+# 
+# # Filtrar solo las que existen en eph_hogar Y tienen NAs
+# vars_con_na <- vars_imputar %>%
+#   keep(~ .x %in% names(eph_hogar) &&
+#          sum(is.na(eph_hogar[[.x]])) > 0)
+# 
+# message("  Variables con NAs para MICE: ", length(vars_con_na))
+# message("  ", paste(vars_con_na, collapse = ", "))
+# 
+# if (length(vars_con_na) > 0) {
+#   
+#   # Subconjunto para MICE: solo variables relevantes
+#   # MICE es O(n × p²) — incluir todas las columnas lo haría inviable
+#   df_mice_input <- eph_hogar %>%
+#     select(all_of(vars_con_na))
+#   
+#   set.seed(42)
+#   imp <- mice(
+#     df_mice_input,
+#     m         = 1,      # una sola imputación
+#     maxit     = 5,      # 5 iteraciones de cadenas
+#     method    = "pmm",  # predictive mean matching
+#     printFlag = FALSE   # suprimir output verboso
+#   )
+#   
+#   df_imputado <- complete(imp, action = 1)
+#   
+#   # Verificación: no deben quedar NAs
+#   nas_restantes <- sum(is.na(df_imputado))
+#   if (nas_restantes > 0) {
+#     warning("MICE dejó ", nas_restantes, " NAs — se imputarán con mediana.")
+#     df_imputado <- df_imputado %>%
+#       mutate(across(everything(),
+#                     ~ if_else(is.na(.x),
+#                               median(.x, na.rm = TRUE), .x)))
+#   }
+#   
+#   message("  MICE completado. NAs restantes: ", sum(is.na(df_imputado)))
+#   
+#   # Reemplazar columnas imputadas en eph_hogar
+#   eph_hogar <- eph_hogar %>%
+#     select(-all_of(vars_con_na)) %>%
+#     bind_cols(df_imputado)
+#   
+# } else {
+#   message("  No hay NAs en las variables relevantes — MICE omitido.") 
+# } En modelado se hace step_impute_mode y step_impute_median
 # 5. Construcción del MPI Alkire-Foster
 # ------------------------------------------------------------------------------
 eph_hogar <- construir_mpi(eph_hogar, k = AF_UMBRAL_K)
@@ -325,10 +326,12 @@ eph_model_data <- eph_hogar %>%
 
 # 8. Segmentación temporal Train / Test y comprobacion variables NA.
 # ------------------------------------------------------------------------------
-# Train: 2016–2024 (marco censal 2010)
-# Test:  2025      (primer año con marco censal 2022)
-eph_train <- eph_model_data %>% filter(ano4 < 2025)
-eph_test  <- eph_model_data %>% filter(ano4 == 2025)
+# Train: 2016–2023 (marco censal 2010)
+# Test: 2024 (marco censal 2010)
+# Test Externo:  2025      (primer año con marco censal 2022)
+eph_train <- eph_model_data %>% filter(ano4 < 2024)
+eph_test <- eph_model_data |> filter(ano4 == 2024)
+eph_externo  <- eph_model_data %>% filter(ano4 == 2025)
 
 message("Verificación de variables MCA críticas:")
 c("ii7", "ii8", "ii9", "iv1", "iv2", "iv5", "iv10") %>%
@@ -345,11 +348,13 @@ c("ii7", "ii8", "ii9", "iv1", "iv2", "iv5", "iv10") %>%
 saveRDS(eph_model_data, "data/processed/eph_model_data.rds")
 saveRDS(eph_train,      "data/processed/eph_train_ml.rds")
 saveRDS(eph_test,       "data/processed/eph_test_ml.rds")
+saveRDS(eph_externo, "data/processed/eph_externo_ml.rds")
 
 message("✓ Step 04 finalizado.")
 message("  Hogares totales: ", nrow(eph_model_data))
-message("  Train (2016-2024): ", nrow(eph_train))
-message("  Test  (2025):      ", nrow(eph_test))
+message("  Train (2016-2023): ", nrow(eph_train))
+message("  Test (2024): ", nrow(eph_test))
+message("  Test Externo (2025):      ", nrow(eph_externo))
 
 # Verificación: tasa de pobreza monetaria nunca debe ser 1.0 en ninguna región
 message("\nVerificación de tasas por región:")

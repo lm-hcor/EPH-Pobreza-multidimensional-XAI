@@ -210,3 +210,165 @@ p_biplot <- fviz_mca_var(
 ggsave(paste0("output/figures/mca_biplot_", anio_ref, ".png"), p_biplot, width = 10, height = 8)
 
 message("✓ Step 05 (MCA) completado con ", length(vars_estables), " variables.")
+
+# Sin otros.
+library(factoextra)
+library(dplyr)
+library(stringr)
+
+# Año de referencia
+anio_ref <- as.character(max(anios_train))
+
+# Objeto MCA
+res_mca_obj <- resultados_mca[[anio_ref]]$res_mca
+
+# Renombrar categorías
+cats_originales <- rownames(res_mca_obj$var$coord)
+
+cats_nuevas <- cats_originales %>%
+  str_replace("iv2_1", "Pared_Ladrillo_Cal") %>%
+  str_replace("iv2_2", "Pared_Ladrillo_Solo") %>%
+  str_replace("iv2_3", "Pared_Madera_Chapa") %>%
+  str_replace("iv2_4", "Pared_Chapa_Carton") %>%
+  str_replace("iv2_5", "Pared_Otro_Precario") %>%
+  str_replace("iv1_1", "Casa") %>%
+  str_replace("iv1_2", "Casilla/Rancho") %>%
+  str_replace("iv1_3", "Departamento") %>%
+  str_replace("ii7_1", "Prop_Vivienda_y_Terreno") %>%
+  str_replace("ii7_2", "Prop_Vivienda_Solo") %>%
+  str_replace("ii7_3", "Inquilino") %>%
+  str_replace("ii7_4", "Ocupante_pago_impuestos") %>%
+  str_replace("ii7_6", "Ocupante_de_hecho") %>%
+  str_replace("iv6_1", "Agua_Red_Interna") %>%
+  str_replace("iv10_1", "Baño_Inodoro_con_Boton") %>%
+  str_replace("iv12_1", "Cloaca_Red") %>%
+  str_replace("ii8_1", "Gas_Red") %>%
+  str_replace("ii8_2", "Gas_Garrafa") %>%
+  str_replace("ii8_3", "Leña_Carbon") %>%
+  str_replace("v12_1", "Tiene_Cable") %>%
+  str_replace("v12_2", "No_Tiene_Cable") %>%
+  str_replace("v2_1", "Tiene_Heladera") %>%
+  str_replace("v2_2", "No_Tiene_Heladera") %>%
+  str_replace("v13_1", "Tiene_Auto") %>%
+  str_replace("v13_2", "No_Tiene_Auto") %>%
+  str_replace("iv5_1", "Piso_con_Revestimiento") %>%
+  str_replace("iv5_2", "Piso_sin_Revestimiento") %>%
+  str_replace("ii9_1", "Baño_Interno") %>%
+  str_replace("ii9_2", "Baño_Externo")
+
+rownames(res_mca_obj$var$coord) <- cats_nuevas
+rownames(res_mca_obj$var$contrib) <- cats_nuevas
+
+# Tabla con contribuciones
+tabla_contrib <- data.frame(
+  categoria = cats_nuevas,
+  contrib = rowSums(res_mca_obj$var$contrib)
+)
+
+# Eliminar categorías con NA y otras poco informativas
+tabla_contrib <- tabla_contrib %>%
+  filter(
+    !grepl("\\.NA$", categoria),
+    !grepl("Otros", categoria)
+  ) %>%
+  arrange(desc(contrib))
+
+# Quedarse con las 20 más importantes
+cats_a_mostrar <- tabla_contrib %>%
+  slice_head(n = 20) %>%
+  pull(categoria)
+
+# Biplot limpio
+p_biplot_clean <- fviz_mca_var(
+  res_mca_obj,
+  select.var = list(name = cats_a_mostrar),
+  repel = TRUE,
+  col.var = "contrib",
+  gradient.cols = c("#2C7BB6", "#FDAE61", "#D7191C")
+) +
+  labs(
+    title = paste0("MCA: Estructura de la Privación Material (", anio_ref, ")"),
+    subtitle = "Principales categorías de vivienda y servicios",
+    x = "Dimensión 1",
+    y = "Dimensión 2",
+    color = "Contribución"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "right"
+  )
+
+ggsave(
+  paste0("output/figures/mca_biplot_clean_", anio_ref, ".png"),
+  p_biplot_clean,
+  width = 11,
+  height = 8,
+  dpi = 300
+)
+
+print("✓ Biplot limpio generado.")
+
+# ------------------------------------------------------------------------------
+# Contribución de categorías al plano factorial
+# ------------------------------------------------------------------------------
+
+# Top 15 categorías con mayor contribución total
+top_contrib <- tabla_contrib %>%
+  slice_head(n = 15) %>%
+  mutate(
+    categoria = forcats::fct_reorder(categoria, contrib)
+  )
+
+p_contrib <- ggplot(
+  top_contrib,
+  aes(
+    x = categoria,
+    y = contrib,
+    fill = contrib
+  )
+) +
+  geom_col(width = 0.8) +
+  coord_flip() +
+  scale_fill_gradient(
+    low = "#2C7BB6",
+    high = "#D7191C"
+  ) +
+  labs(
+    title = paste0(
+      "Categorías con mayor contribución al MCA (",
+      anio_ref,
+      ")"
+    ),
+    subtitle = "Contribución acumulada sobre las dimensiones 1 y 2",
+    x = NULL,
+    y = "Contribución (%)"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(
+      face = "bold",
+      size = 15
+    ),
+    plot.subtitle = element_text(
+      size = 11,
+      colour = "grey40"
+    ),
+    legend.position = "none"
+  )
+
+# Guardar
+ggsave(
+  paste0(
+    "output/figures/mca_contribuciones_",
+    anio_ref,
+    ".png"
+  ),
+  p_contrib,
+  width = 8,
+  height = 6,
+  dpi = 300
+)
+
+print("✓ Gráfico de contribuciones generado.")
