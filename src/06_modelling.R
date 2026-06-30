@@ -105,9 +105,9 @@ gc()  # Garbage collection temprano para liberar memoria de carga
 # del mpi_score → incluirlas da ROC-AUC artificial ~0.99
 
 VARS_MCA_DIRECTAS <- c(
-  "v2",   # heladera
-  "v13",  # auto/camioneta
-  "v11",  # internet
+  "v2",   # pensión
+  "v13",  # ahorros
+  "v11",  # beca de gobierno
   "iv1",  # tipo de vivienda
   "iv2",  # material paredes
   "ii7",  # régimen tenencia

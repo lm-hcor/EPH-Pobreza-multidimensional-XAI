@@ -76,14 +76,14 @@ VARS_HOGAR <- c(
   "ii8",        # combustible para cocinar
   "ii9",        # baño: ubicación (dentro/fuera)
   
-  # -- Servicios del hogar --
-  "v1",         # combustible principal para cocinar
-  "v2",         # tiene heladera
-  "v5",         # tiene computadora
-  "v6",         # tiene celular
-  "v11",        # tiene internet
-  "v12",        # tiene cable/satélite
-  "v13",        # tiene auto/camioneta
+  # -- Ingresos --
+  "v1",         # En los ultimos meses vivio de lo que se ganó en el trabajo
+  "v2",         # se vivió de jubilación o pensión
+  "v5",         # de asignación por hijo AUH o Asignación por embarazo
+  "v6",         # con mercaderías, ropa, alimento del gobierno, iglesias, etc
+  "v11",        # de una beca del gobierno para finalizar estudios ProgresAR
+  "v12",        # de ayuda de personas que no viven en el hogar
+  "v13",        # de gastar lo ahorrado
   
   "ix_tot"      # total de personas en el hogar (para cálculo de hacinamiento)
 )

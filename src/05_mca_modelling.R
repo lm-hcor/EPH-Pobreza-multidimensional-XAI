@@ -32,12 +32,12 @@ eph_train <- readRDS("data/processed/eph_train_ml.rds")
 # Seleccionamos variables que describen el "Contexto Estructural" y Confort,
 # pero que NO están en la fórmula del MPI (Alkire-Foster) para evitar circularidad.
 VARS_MCA <- c(
-  # --- Posesión de Activos y Confort (No están en el MPI) ---
-  "v2",      # Tiene heladera
-  "v13",     # Tiene auto/camioneta
-  "v5",      # Tiene computadora 
-  "v11",     # Tiene internet
-  "v12",     # Tiene cable/satélite
+  # --- Estructura de Ingresos ---
+  "v2",      # Se vivió de Jubilacion o pensión
+  "v13",     # Se vivió de gastar lo ahorrado
+  "v5",      # Se vivió de asignación por hijo AUH o Asignación por embarazo
+  "v11",     # Se vivió de una beca del gobierno para finalizar estudios progresAR
+  "v12",     # De ayuda de personas que no viven en el hogar
   
   # --- Contexto de Vivienda (No definen privación  MPI) ---
   "iv1",     # Tipo de vivienda (Casa, departamento, pieza)
@@ -247,10 +247,10 @@ cats_nuevas <- cats_originales %>%
   str_replace("ii8_3", "Leña_Carbon") %>%
   str_replace("v12_1", "Tiene_Cable") %>%
   str_replace("v12_2", "No_Tiene_Cable") %>%
-  str_replace("v2_1", "Tiene_Heladera") %>%
-  str_replace("v2_2", "No_Tiene_Heladera") %>%
-  str_replace("v13_1", "Tiene_Auto") %>%
-  str_replace("v13_2", "No_Tiene_Auto") %>%
+  str_replace("v2_1", "Vivio_Jubilación") %>%
+  str_replace("v2_2", "No_vivió_Jubilación") %>%
+  str_replace("v13_1", "Gastaron_ahorros") %>%
+  str_replace("v13_2", "No_Gastaron_ahorros") %>%
   str_replace("iv5_1", "Piso_con_Revestimiento") %>%
   str_replace("iv5_2", "Piso_sin_Revestimiento") %>%
   str_replace("ii9_1", "Baño_Interno") %>%

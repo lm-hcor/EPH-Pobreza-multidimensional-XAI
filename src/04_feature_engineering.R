@@ -147,8 +147,8 @@ vars_nivel_hogar <- eph_final %>%
     iv7    = first(iv7),    # Ubicación del suministro de agua
     iv8    = first(iv8),    # ¿Tiene baño/retrete?
     iv10   = first(iv10),   # Tipo de descarga del baño (Botón, cadena, balde)
-    v2     = first(v2),     # Posee heladera (Sí/No)
-    v13    = first(v13),    # Posee auto/camioneta (Sí/No)
+    v2     = first(v2),     # Se vivió de ayuda de personas que no viven en el hogar
+    v13    = first(v13),    # Se vivió de gastar lo ahorrado
     
     # ── 5. Vulnerabilidades y Brechas ────────────────────────────────────────────
     # Salud: 1 si ningún miembro tiene cobertura (obra social/prepaga)

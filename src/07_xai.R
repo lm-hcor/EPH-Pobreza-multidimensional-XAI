@@ -115,9 +115,9 @@ ETIQUETAS_VARS <- c(
   "mca_dim2" = "MCA Dim.2 (Infraestr.)",
   
   # Variables MCA originales (activos y vivienda)
-  "v2" = "Posee heladera",
-  "v11" = "Tiene internet",
-  "v13" = "Tiene auto/camioneta",
+  "v2" = "Vivió de jubilación",
+  "v11" = "Vivió de Beca",
+  "v13" = "Gastó ahorros",
   "iv1" = "Tipo de vivienda",
   "iv2" = "Material paredes",
   "ii7" = "Régimen de tenencia",
