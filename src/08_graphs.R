@@ -9,29 +9,26 @@
 #            - Distribución de privaciones
 #
 # DEPENDENCIAS:
-#   install.packages(c("sf", "rnaturalearth", "rnaturalearthdata",
-#                      "ggspatial", "viridis", "scales", "patchwork"))
+#   install.packages(c("sf", "geoAr", "viridis", "scales", "patchwork"))
 #
-# NOTA: Los mapas usan el paquete {rnaturalearth} para las provincias
-# argentinas y las asignan manualmente a las 6 regiones EPH.
+# NOTA: Los mapas usan el paquete {geoAr} para las provincias
+# argentinas, incluyendo Malvinas y las Islas del Atlántico Sur, y por tanto 
+# cubriendo la totalidad del territorio argentino.
 # ==============================================================================
 
-# Esto debería descargar los datos de mapas (aprox 12MB)
-remotes::install_github("ropensci/rnaturalearthhires")
+# Verificar e instalar dependencias si faltaran
+if (!requireNamespace("geoAr", quietly = TRUE)) {
+  remotes::install_github("politicaargentina/geoar")
+}
+
 library(tidyverse)
 library(patchwork)
 library(scales)
 library(sf)
-library(rnaturalearth)
-library(rnaturalearthdata)
+library(geoAr)  # Asegurado nombre del paquete con A mayúscula
 library(viridis)
 
-# Verificar disponibilidad de paquetes espaciales
-if (!requireNamespace("rnaturalearth", quietly = TRUE)) {
-  stop("Instalar: install.packages(c('rnaturalearth', 'rnaturalearthdata', 'sf'))")
-}
-
-message(">>> Iniciando Step 08: Gráficos para la tesis...")
+message(">>> Iniciando Step 08: Gráficos para la tesis (Versión GeoAR)...")
 dir.create("output/figures/thesis", recursive = TRUE, showWarnings = FALSE)
 
 # ==============================================================================
@@ -180,26 +177,35 @@ tema_tesis <- theme_minimal(base_size = 12) +
   )
 
 # ==============================================================================
-# 2. MAPA DE ARGENTINA — TASA MPI POR REGIÓN
+# 2. MAPA DE ARGENTINA — TASA MPI POR REGIÓN (CON GEOAR Y MALVINAS)
 # ==============================================================================
-message(">>> Generando mapa de Argentina...")
+message(">>> Generando mapa de Argentina usando {geoar}...")
 
-# A. Cargar provincias (Sin el argumento scale que rompe todo)
-arg_provincias <- ne_states(country = "Argentina", returnclass = "sf") %>%
-  mutate(name = str_to_title(name))
+# 1. Descargar las geometrías oficiales (que solo traen 'codprov_censo')
+arg_provincias <- geoAr::get_geo("ARGENTINA", level = "provincia") %>% 
+  st_transform(crs = 4326)
 
-# B. Normalizar nombres de provincias para que el JOIN sea perfecto
-# Esto corrige el descalce entre RNaturalEarth y la tabla EPH
+# 2. Obtener el diccionario de nombres y códigos de geoAr
+diccionario_provincias <- geoAr::show_arg_codes(viewer = FALSE) %>% 
+  select(codprov_censo, name = name_iso) %>% 
+  filter(codprov_censo != " ") # Filtrar la fila de "Argentina" total
+
+# 3. Unir las geometrías con sus nombres correspondientes y normalizar
 arg_provincias <- arg_provincias %>%
+  left_join(diccionario_provincias, by = "codprov_censo") %>% 
+  mutate(name = str_to_title(name)) %>% 
   mutate(name = case_when(
     name == "Ciudad Autónoma De Buenos Aires" ~ "Ciudad De Buenos Aires",
-    name == "Tierra Del Fuego Antártida E Islas Del Atlántico Sur" ~ "Tierra Del Fuego",
+    name == "Tierra Del Fuego, Antártida E Islas Del Atlántico Sur" ~ "Tierra Del Fuego",
     TRUE ~ name
   ))
 
-# C. Tu tabla de mapeo (Normalizada a Títulos)
+# Verificar que ahora sí tienes la columna 'name' con los nombres limpios
+print(head(arg_provincias))
+
+# Tabla de mapeo para regiones EPH (Normalizada)
 mapa_prov_region <- tribble(
-  ~name,                       ~region,
+  ~name,                        ~region,
   "Ciudad De Buenos Aires",    "GBA",
   "Buenos Aires",              "GBA",
   "Santa Fe",                  "Pampeana",
@@ -238,7 +244,6 @@ tasa_mpi_region <- eph_train %>%
     .groups     = "drop"
   )
 
-# SHAP regional: variable más importante por región
 top1_shap_region <- tabla_shap_regional %>%
   group_by(region) %>%
   slice_max(importancia, n = 1, with_ties = FALSE) %>%
@@ -249,50 +254,48 @@ top1_shap_region <- tabla_shap_regional %>%
 
 message(">>> Ensamblando mapa final...")
 
-# Crear dataframe de tasas MPI por región para el join
-df_tasa_mpi <- tasa_mpi_region %>%
-  rename(tasa_mpi_mapa = tasa_mpi)
-
-# Crear dataframe SHAP top por región para el join
+df_tasa_mpi <- tasa_mpi_region %>% rename(tasa_mpi_mapa = tasa_mpi)
 df_shap_top <- top1_shap_region
 
-# 1. Partir de las provincias con geometría
+# Uniones geoespaciales
 arg_map_data <- arg_provincias %>%
-  select(-any_of("region")) # Solo borra 'region' si ya existe
-
-# 2. Unir la región usando el mapeo provincia->región
-arg_map_data <- arg_map_data %>%
-  left_join(mapa_prov_region %>% select(name, region), by = "name")
-
-# 3. Unir Tasa MPI por región (usando "region" como clave)
-arg_map_data <- arg_map_data %>%
-  left_join(df_tasa_mpi, by = c("region" = "region_label"))
-
-# Verificar que la columna existe
-if (!"tasa_mpi_mapa" %in% names(arg_map_data)) {
-  warning("No se pudo unir tasa_mpi_mapa. Verificando columnas:")
-  print(names(arg_map_data))
-}
-
-# 4. Unir SHAP top por región
-arg_map_data <- arg_map_data %>%
+  left_join(mapa_prov_region, by = "name") %>%
+  left_join(df_tasa_mpi, by = c("region" = "region_label")) %>%
   left_join(df_shap_top, by = "region")
 
-message(">>> ¡Ensamblaje terminado! Listos para ggplot.")
-# Calcular centroides de región para etiquetas
+# Calcular centroides de forma segura para geometrías sf agrupadas
 centroides_region <- arg_map_data %>%
   filter(!is.na(region)) %>%
   group_by(region) %>%
-  summarise(geometry = st_union(geometry), .groups = "drop") %>%
-  st_centroid() %>%
-  mutate(
-    lon = st_coordinates(.)[, 1],
-    lat = st_coordinates(.)[, 2]
-  ) %>%
+  summarise(geometry = st_union(geometry), .groups = "drop")
+
+# Para evitar advertencias de st_centroid sobre coordenadas planas vs geográficas
+centroides_geom <- st_centroid(st_geometry(centroides_region))
+centroides_coords <- st_coordinates(centroides_geom)
+
+centroides_region <- centroides_region %>%
   st_drop_geometry() %>%
+  mutate(
+    lon = centroides_coords[, 1],
+    lat = centroides_coords[, 2]
+  ) %>%
   left_join(tasa_mpi_region, by = c("region" = "region_label"))
 
-# 2A. Mapa de tasa MPI por región
+# Ajuste visual manual para que las etiquetas no se pisen en regiones complejas (como GBA)
+centroides_region <- centroides_region %>%
+  mutate(
+    lat = case_when(
+      region == "GBA" ~ lat - 0.6,
+      region == "Patagonia" ~ lat - 2.0, # Centrado óptimo excluyendo sector Antártico
+      TRUE ~ lat
+    ),
+    lon = case_when(
+      region == "GBA" ~ lon + 0.8,
+      TRUE ~ lon
+    )
+  )
+
+# 2A. Mapa de tasa MPI por región (GeoAR)
 p_mapa_mpi <- ggplot(arg_map_data) +
   geom_sf(aes(fill = tasa_mpi_mapa * 100), color = "white", linewidth = 0.3) +
   geom_label(
@@ -308,7 +311,6 @@ p_mapa_mpi <- ggplot(arg_map_data) +
     fontface = "bold",
     fill = "white",
     alpha = 0.85,
-    linewidth = 0.2,
     label.padding = unit(0.15, "lines")
   ) +
   scale_fill_viridis_c(
@@ -317,11 +319,11 @@ p_mapa_mpi <- ggplot(arg_map_data) +
     name = "Tasa MPI (%)",
     labels = label_number(suffix = "%", accuracy = 0.1)
   ) +
-  coord_sf(xlim = c(-74, -52), ylim = c(-56, -21)) +
+  coord_sf(xlim = c(-74, -53), ylim = c(-56, -21), expand = FALSE) +
   labs(
     title    = "Tasa de Pobreza Multidimensional por Región EPH",
-    subtitle = "Indicador Alkire-Foster (k = 1/3) — Series 2016-2023, ponderado EPH",
-    caption  = "Fuente: EPH-INDEC. Cálculo propio mediante Alkire-Foster."
+    subtitle = "Geometría Oficial (Incluye Malvinas e Islas del Atlántico Sur)",
+    caption  = "Fuente: EPH-INDEC. Base cartográfica oficial de {geoar}."
   ) +
   tema_tesis +
   theme(
@@ -335,9 +337,12 @@ ggsave("output/figures/thesis/mapa_tasa_mpi.png",
        p_mapa_mpi,
        width = 9, height = 11, dpi = 200
 )
-message("  Mapa MPI guardado.")
+message("  Mapa MPI con Malvinas guardado.")
 
+# ==============================================================================
 # 2B. Mapa de variable SHAP más importante por región
+# ==============================================================================
+
 p_mapa_shap <- ggplot(arg_map_data %>% filter(!is.na(region))) +
   geom_sf(aes(fill = region), color = "white", linewidth = 0.3) +
   geom_label(
@@ -351,15 +356,15 @@ p_mapa_shap <- ggplot(arg_map_data %>% filter(!is.na(region))) +
     fontface = "bold",
     fill = "white",
     alpha = 0.9,
-    label.size = 0.2,
+    linewidth = 0.2, # <-- CORREGIDO: Reemplazado 'label.size' por 'linewidth' para ggplot2 >= 3.5.0
     label.padding = unit(0.15, "lines")
   ) +
   scale_fill_manual(values = COLORES_REGION, guide = "none") +
-  coord_sf(xlim = c(-74, -52), ylim = c(-56, -21)) +
+  coord_sf(xlim = c(-74, -53), ylim = c(-56, -21), expand = FALSE) +
   labs(
     title    = "Principal Predictor de Pobreza MPI por Región",
-    subtitle = "Variable con mayor |SHAP| promedio — XGBoost",
-    caption  = "SHAP calculado sobre 300 hogares por región."
+    subtitle = "Variable con mayor |SHAP| promedio — XGBoost (GeoAR)",
+    caption  = "SHAP calculado sobre muestra representativa por región."
   ) +
   tema_tesis +
   theme(
@@ -372,12 +377,18 @@ ggsave("output/figures/thesis/mapa_shap_top1_region.png",
        p_mapa_shap,
        width = 9, height = 11, dpi = 200
 )
-message("  Mapa SHAP regional guardado.")
+message("  Mapa SHAP regional con Malvinas guardado. ¡Excelente!")
 
 # ==============================================================================
 # 3. SHAP REGIONAL COMPARADO — RANKING DE VARIABLES
 # ==============================================================================
 message(">>> Generando gráfico SHAP regional comparado...")
+
+# Nos aseguramos de cargar tidytext para que exista la función reorder_within y scale_y_reordered
+if (!requireNamespace("tidytext", quietly = TRUE)) {
+  install.packages("tidytext")
+}
+library(tidytext)
 
 p_shap_regional <- tabla_shap_regional %>%
   group_by(region) %>%
@@ -389,9 +400,10 @@ p_shap_regional <- tabla_shap_regional %>%
                       "GBA", "Pampeana", "Noroeste",
                       "Nordeste", "Cuyo", "Patagonia"
                     )
-    ),
-    variable_label = fct_reorder(variable_label, importancia)
+    )
   ) %>%
+  # El reorder_within ahora se ejecutará sin problemas de ámbito
+  mutate(variable_label = tidytext::reorder_within(variable_label, importancia, region)) %>%
   ggplot(aes(
     x = importancia, y = variable_label,
     fill = region
@@ -401,6 +413,7 @@ p_shap_regional <- tabla_shap_regional %>%
             hjust = -0.1, size = 3
   ) +
   facet_wrap(~region, scales = "free_y", ncol = 3) +
+  tidytext::scale_y_reordered() + # Permite que reorder_within funcione limpiamente por faceta
   scale_fill_manual(values = COLORES_REGION) +
   scale_x_continuous(expand = expansion(mult = c(0, 0.25))) +
   labs(
@@ -417,19 +430,12 @@ ggsave("output/figures/thesis/shap_regional_comparado.png",
        p_shap_regional,
        width = 14, height = 10, dpi = 200
 )
-message("  SHAP regional comparado guardado.")
-
+message("  Gráfico de SHAP regional generado con éxito.")
 # ==============================================================================
 # 4. HEATMAP DE IMPORTANCIA REGIONAL
 # ==============================================================================
 message(">>> Generando heatmap SHAP regional...")
 
-# Variables que aparecen en el top 5 de al menos una región
-vars_en_top5 <- tabla_shap_regional %>%
-  pull(variable_label) %>%
-  unique()
-
-# Pivot: variable × región con SHAP medio
 shap_heatmap_data <- tabla_shap_regional %>%
   select(region, variable_label, importancia) %>%
   complete(region, variable_label, fill = list(importancia = 0)) %>%
@@ -440,10 +446,7 @@ shap_heatmap_data <- tabla_shap_regional %>%
                       "Nordeste", "Cuyo", "Patagonia"
                     )
     ),
-    variable_label = fct_reorder(variable_label,
-                                 importancia,
-                                 .fun = mean
-    )
+    variable_label = fct_reorder(variable_label, importancia, .fun = mean)
   )
 
 p_heatmap <- shap_heatmap_data %>%
@@ -451,7 +454,7 @@ p_heatmap <- shap_heatmap_data %>%
   geom_tile(color = "white", linewidth = 0.5) +
   geom_text(
     aes(label = if_else(importancia > 0,
-                        round(importancia, 3), NA_real_
+                        as.character(round(importancia, 3)), NA_character_
     )),
     size = 3, color = "white", fontface = "bold"
   ) +
@@ -465,7 +468,7 @@ p_heatmap <- shap_heatmap_data %>%
     subtitle = "Valores SHAP medios por región — XGBoost",
     x        = "Región EPH",
     y        = NULL,
-    caption  = "Celdas en blanco: variable fuera del top 5 de esa región."
+    caption  = "Celdas en blanco/cero: variable fuera del top 5 de esa región."
   ) +
   tema_tesis +
   theme(legend.position = "right")
@@ -474,7 +477,6 @@ ggsave("output/figures/thesis/heatmap_shap_regional.png",
        p_heatmap,
        width = 12, height = 7, dpi = 200
 )
-message("  Heatmap SHAP regional guardado.")
 
 # ==============================================================================
 # 5. COMPARATIVA DE MODELOS — MÉTRICAS EN TEST

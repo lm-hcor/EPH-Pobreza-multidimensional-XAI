@@ -1,0 +1,228 @@
+---
+author: "Tesis de Investigación"
+date: "`r format(Sys.Date(), '%d de %B de %2026')`"
+output:
+  pdf_document:
+    toc: false
+    number_sections: true
+    fig_caption: true
+    keep_tex: false
+geometry: margin=1in
+fontsize: 11pt
+header-includes:
+  - \usepackage{booktabs}
+  - \usepackage{longtable}
+  - \usepackage{float}
+  - \floatplacement{figure}{H}
+---
+
+# Introducción y Metodología
+
+La medición clásica de la pobreza por ingresos resulta insuficiente para capturar privaciones estructurales complejas. Este trabajo propone un enfoque metodológico híbrido: la construcción de un **Índice de Pobreza Multidimensional (IPM)** bajo la metodología de Alkire-Foster ($k = 1/3$) utilizando la Encuesta Permanente de Hogares (EPH-INDEC), combinado con algoritmos de **Machine Learning** y herramientas de Explicabilidad **(SHAP-BreakDown)** para analizar la heterogeneidad regional.
+
+# Dimensiones del IPM Evaluadas
+
+Para la construcción del índice, se estructuraron las siguientes dimensiones prioritarias:
+
+- **Vivienda:** Calidad de los materiales del piso y del techo (carácter deficitario).
+
+- **Saneamiento:** Acceso a agua potable de red y conexión formal a la red de cloacas.
+
+- **Educación:** Asistencia escolar en menores y nivel educativo alcanzado por el jefe de hogar.
+
+# Edificio y decisiones metodológicas. 
+
+Para predecir de forma temprana la condición de pobreza multidimensional de los hogares, se estructuró un pipeline robusto utilizando el ecosistema **tidymodels** bajo estrictas restricciones de hardware (16GB RAM) y un límite de cómputo optimizado a menos de 16 horas. La metodología se diseñó siguiendo un criterio de máxima robustez para garantizar la validez del modelo como herramienta de simulación en políticas públicas.
+
+## Decisiones Críticas en la Arquitectura de Datos
+
+El diseño del ecosistema de datos e ingeniería de atributos se rigió por tres decisiones metodológicas fundamentales orientadas a neutralizar sesgos e inconsistencias estructurales:
+
+1.  **Deflactación Regional e Intertemporal:** Para neutralizar la distorsión del sesgo del promedio nacional en un contexto hiperinflacionario, los flujos de ingresos nominales (`itcf_real`, `p21_real`) se sincronizaron a pesos constantes. Se aplicó el Índice de Precios al Consumidor (IPC) desagregado de forma independiente para las seis grandes regiones estadísticas del INDEC, con 2016 como año base.
+
+2.  **Alineación Demográfica Post-Censal:** Los factores de expansión originales de la EPH (`pondera`) para el set de entrenamiento se reponderaron regionalmente. El objetivo fue aproximar la estructura demográfica proyectada por el marco del Censo Nacional de Población, Hogares y Viviendas 2022, mitigando activamente el *data drift* derivado de marcos muestrales desactualizados.
+
+3.  **Reducción de Dimensionalidad mediante Análisis de Correspondencias Múltiples (MCA):** Para variables de infraestructura física no lineales (como `v2`, `v11`, `v13`, `iv1`, `iv2`, `ii7`, `ii8`), se integró un MCA dinámico con la librería **FactoMineR**. Las coordenadas latentes resultantes (`mca_dim1`, `mca_dim2`) reemplazaron a las variables originales crudas en el modelado. Esta estrategia previno la colinealidad, controló la inflación artificial de métricas y descartó predictores que indujeran un *data leakage* conceptual directo con la variable target binaria del IPM (`mpi_pobre`).
+
+## Prevención del Data Leakage Temporal y Espacial
+
+La validación cruzada clásica aleatoria tiende a subestimar el error de generalización debido a la autocorrelación espacial y los patrones temporales. Para garantizar la resiliencia del pipeline ante cambios estructurales e institucionales, se implementó una estrategia de doble aislamiento:
+
+- **Validación Cruzada por Bloques Espaciales (Block Cross-Validation):** Se utilizó la función `group_vfold_cv` agrupando por conglomerados urbanos (`grupo_cv`). Todas las observaciones pertenecientes a un aglomerado completo se aislaron de manera estricta, quedando contenidas únicamente en el pool de entrenamiento o en el de validación. Esto respeta la dependencia espacial intrínseca de los datos habitacionales.
+
+- **Partición Cronológica Pura (Chronological Time-Splitting):** Se ejecutó una separación tajante del conjunto de datos. El conjunto de entrenamiento y prueba interna abarca el período histórico 2016-2024 (bajo el marco del Censo 2010), mientras que el año **2025** se reservó de forma exclusiva como un **Set de Validación Externa**. Esto permitió evaluar el rendimiento del modelo frente al quiebre de tendencia y el cambio de marco muestral implementado por el INDEC a partir de la nueva base censal 2022.
+
+## Solución del Desbalance de Clases mediante SMOTE-NC Externo
+
+Dada la naturaleza minoritaria de la clase pobre multidimensional extrema, el balanceo de clases resultó indispensable. No obstante, para sortear el cuello de botella computacional que supone calcular de forma repetitiva distancias de vecinos cercanos dentro de cada *fold* de validación cruzada, se optó por un **diseño híbrido optimizado**:
+
+Se aplicó la técnica **SMOTE-NC** (del paquete **themis**) con un `over_ratio = 0.25` de manera **externa** y por única vez sobre la matriz de entrenamiento pre-procesada. Posteriormente, para asegurar la coherencia regional y el correcto funcionamiento de los resamples, las variables técnicas metodológicas (`codusu`, `pondera`, `grupo_cv`) se reasignaron sintéticamente a los nuevos casos vectoriales simulados utilizando un algoritmo de muestreo de estratificación.
+
+## Selección de Hiperparámetros mediante ANOVA Racing
+
+En lugar de recurrir a búsquedas exhaustivas por grilla (*grid search*) que consumen tiempo de cómputo de manera ineficiente, la optimización de los hiperparámetros se resolvió mediante **ANOVA Race Tuning** (`tune_race_anova` del paquete **finetune**).
+
+Se evaluaron las grillas espaciales mediante paralelismo restrictivo a nivel de resample (`parallel_over = "resamples"`) limitado a 2 *workers* PSOCK. El algoritmo evaluó el desempeño inicial de las configuraciones candidatas sobre un *burn-in* de los primeros 2 *folds*, procediendo a eliminar de forma temprana aquellas combinaciones de hiperparámetros que resultaron estadísticamente inferiores según un análisis de varianza (ANOVA). Esta optimización se orientó estrictamente a maximizar el área bajo la curva ROC (AUC-ROC) sin saturar los recursos de hardware.
+
+# Evaluación del Rendimiento Operativo de los Modelos
+
+La evaluación de los clasificadores se realizó utilizando métricas independientes de umbral (*threshold-agnostic*) y bajo la optimización del balance de clasificación. Este equilibrio es crítico para la formulación de políticas públicas: busca minimizar los falsos positivos (filtración de recursos fiscales a hogares no vulnerables) y mitigar los falsos negativos (omisión de cobertura social a hogares que realmente lo necesitan).
+
+A continuación, se detalla el comportamiento de los tres algoritmos evaluados a lo largo de las particiones de Entrenamiento (*Train*), Prueba (*Test 2024*) y Validación Temporal Externa (*Externo 2025*):
+
+|  |  |  |  |  |  |  |
+|----------|----------|----------|----------|----------|------------|----------|
+| **Partición** | **Modelo** | **AUC-ROC** | **F1-Score** | **Sensibilidad** | **Especificidad** | **Precisión** |
+| **Train** | **XGBoost** | **0.992** | **0.876** | **0.912** | **0.887** | **0.986** |
+|  | Random Forest | 0.997 | 0.925 | 0.940 | 0.923 | 0.987 |
+|  | CART (Árbol) | 0.962 | 0.787 | 0.832 | 0.785 | 0.968 |
+| **Test 2024** | **XGBoost** | **0.865** | **0.854** | **0.208** | **0.147** | **0.730** |
+|  | Random Forest | 0.863 | 0.735 | 0.234 | 0.178 | 0.807 |
+|  | CART (Árbol) | 0.711 | 0.623 | 0.162 | 0.098 | 0.742 |
+| **Externo 2025** | **XGBoost** | **0.840** | **0.794** | **0.166** | **0.109** | **0.714** |
+|  | Random Forest | 0.838 | 0.692 | 0.190 | 0.137 | 0.794 |
+|  | CART (Árbol) | 0.695 | 0.593 | 0.137 | 0.079 | 0.740 |
+
+# Análisis Técnico de los Resultados
+
+## Resiliencia y Estabilidad Temporal (Impacto del Cambio Censal 2025)
+
+La evaluación sobre el conjunto externo **2025** —que actúa como una prueba de estrés metodológica debido a la transición del marco muestral del Censo 2010 al Censo 2022 por parte del INDEC— arroja conclusiones sumamente valiosas:
+
+- **Degradación Controlada:** El modelo **XGBoost** demuestra una robustez sobresaliente, registrando una caída marginal de apenas $0.025$ puntos en el área bajo la curva (de **0.865** en Test 2024 a **0.840** en Externo 2025).
+
+- **Desempeño del Ensamble:** El comportamiento de **Random Forest** sigue una trayectoria de degradación equivalente (de **0.863** a **0.838**). Esto valida de manera empírica que el diseño del pipeline —especialmente la reponderación demográfica post-censal y la deflactación de ingresos por regiones estadísticas— blindó con éxito a los modelos de ensamble contra el *data drift* institucional.
+
+## Capacidad de Discriminación frente a Modelos Base
+
+El contraste entre los modelos de ensamble y el clasificador base es drástico. El modelo **CART (Árbol de Decisión)** sufre un claro problema de sobreajuste (*overfitting*) en el entrenamiento (AUC-ROC de **0.962**) que colapsa rápidamente al enfrentarse a datos no vistos (AUC-ROC de **0.711** en Test y **0.695** en Externo 2025). Los modelos basados en árboles aleatorios y boosting de gradiente justifican con creces su mayor complejidad computacional al aportar una ganancia neta de más de **14 puntos porcentuales** en la capacidad de clasificación en los entornos más exigentes.
+
+## Compromiso en la Detección (Trade-off de Métricas)
+
+Un hallazgo metodológico crucial reside en el comportamiento de la **Sensibilidad** y la **Precisión** en las fases de validación y testeo.
+
+Mientras que los valores de ajuste (*Train*) rozan niveles óptimos de clasificación, la caída extrema de la Sensibilidad en Test y Externo (fijándose en **0.208** y **0.166** para XGBoost, respectivamente) junto a niveles de precisión que sostienen umbrales del **71.4% al 73.0%** exponen la naturaleza del fenómeno: el modelo es altamente preciso cuando dictamina una situación de pobreza extrema multidimensional (pocas falsas alarmas / alta selectividad), pero resulta conservador en la cobertura general de la muestra. Esto refuerza técnicamente la decisión de aplicar umbrales probabilísticos calibrados ad-hoc ($t = 0.444$ para XGBoost) para compensar y balancear de forma operativa la asignación del gasto social sobre el terreno.
+
+# Inteligencia Artificial Explicable (XAI) y Determinantes de la Pobreza
+
+El uso de modelos de ensamble de alto rendimiento como **XGBoost** suele verse limitado en el diseño de políticas públicas debido a su naturaleza de "caja negra". Para superar esta barrera, abrir el algoritmo y auditar sus decisiones de manera transparente, este estudio implementa técnicas de **Inteligencia Artificial Explicable (XAI)** basadas en la librería `{DALEX}` y la aproximación unificada de **SHAP (SHapley Additive exPlanations)**.
+
+Para ello, primero se calculó la tasa de pobreza multidimensional por región, y su evolución a lo largo del lapso temporal del estudio.
+
+![](images/mapa_tasa_mpi.png)
+
+![](images/evolucion_mpi_regional.png)
+
+Ambos gráficos se alinean con la literatura existente y muestran grandes disparidades regionales. Además, en su evolución, la naturaleza conservadora del índice muestra la robustez de las deprivaciones estructurales respecto a shocks económicos y sociales temporales dentro del lapso temporal del estudio. Una vez realizado estos análisis previos, se realizaron SHAPs regionales y globales, para observar cuales son las variables tanto a nivel regional como global determinando la pobreza multidimensional en el país.
+
+![](images/mapa_shap_top1_region.png)
+
+![](images/image-01.png)
+
+Los gráficos muestran no solo los distintos determinantes impulsando la pobreza multidimensional en cada región, lo que es de gran utilidad a la política pública, sino también el peso específico de variables estructurales, como el nivel educativo máximo de la educación familiar o el perfil habitacional de las unidades familiares.
+
+- **Regiones del Norte (NOA y NEA):** En estas jurisdicciones, el modelo asigna el mayor peso predictivo a las dimensiones latentes del Análisis de Correspondencias Múltiples (MCA), específicamente a la dimensión de infraestructura básica de la vivienda (deficiencias estructurales de materiales y saneamiento como acceso formal a la red de cloacas y agua potable de red).
+
+- **Regiones Urbanas (GBA y Pampeana):** Aquí, el principal vector de vulnerabilidad se traslada a la densidad habitacional (hacinamiento, expresado en la cantidad de personas por habitación) y la precarización o informalidad de los ingresos de la ocupación principal.
+
+## Análisis de Atribuciones Locales (Casos Tipo)
+
+Para comprender la lógica interna del algoritmo ante perfiles vulnerables contrastantes, se implementaron gráficos de descomposición aditiva (*Break-Down Plots*). Esta técnica permite diseccionar la predicción del modelo para casos individuales, sumando o restando probabilidad a medida que se evalúa cada variable de forma secuencial.
+
+Se seleccionaron y analizaron cuatro perfiles de hogares específicos:
+
+### Caso Tipo 1: Máxima Probabilidad de Pobreza Multidimensional
+
+- **Perfil:** Hogar ubicado en el Nordeste Argentino (NEA), compuesto por más de 5 integrantes bajo condiciones severas de hacinamiento crítico (más de 3 personas por dormitorio), con ingresos reales del jefe de hogar nulos o en el primer decil regional deflactado, y viviendas con puntajes mínimos en el MCA (sin cloacas ni agua potable).
+
+- **Comportamiento del Modelo:** El predictor arranca desde la probabilidad base del modelo. El factor geográfico (NEA) actúa como un primer penalizador positivo, pero la escalada crítica se dispara de forma aditiva por las dimensiones de infraestructura de vivienda (MCA) y el tamaño del hogar, empujando la probabilidad final estimada de pobreza multidimensional a valores superiores al **92%**.
+
+### Caso Tipo 2: Mínima Probabilidad de Pobreza Multidimensional
+
+- **Perfil:** Hogar unipersonal o bipersonal ubicado en la Región Patagónica, con jefe de hogar con educación universitaria completa, ingresos reales en el decil superior y vivienda con óptimas condiciones estructurales (MCA sobresaliente).
+
+- **Comportamiento del Modelo:** El nivel educativo alto y la alta capacidad de ingresos operan de manera inmediata restando probabilidad de forma drástica. La ausencia total de privaciones habitacionales ancla la predicción final en un rango menor al **1%**.
+
+### Casos Tipo 3 y 4: Casos Límites (Fronteras de Clasificación)
+
+Estos perfiles representan la mayor utilidad de la IA Explicable para el diseño de políticas de focalización:
+
+- **Caso Tipo 3 (Clasificado Pobre por Escaso Margen - Probabilidad** $\approx 0.48$): Hogar que cuenta con ingresos por encima de la línea monetaria clásica, pero cuyas privaciones latentes en educación (jefe de hogar con primaria incompleta) y saneamiento deficitario terminan inclinando la predicción por encima del umbral calibrado ($t = 0.444$).
+
+- **Caso Tipo 4 (Clasificado No Pobre por Escaso Margen - Probabilidad** $\approx 0.41$): Hogar con severo hacinamiento estructural, pero donde un shock positivo de ingresos reales temporales en el trimestre evaluado amortigua temporalmente la predicción del modelo, manteniéndola justo por debajo del umbral crítico.
+
+> **Implicancia de Política Pública:** Los gráficos de descomposición aditiva demuestran que la pobreza multidimensional no es un fenómeno binario estanco. Al abrir la caja negra con SHAP y Break-Down plots, el Estado puede auditar exactamente qué privación específica está empujando a un hogar vulnerable al límite del sistema de protección social, permitiendo una intervención quirúrgica y no paramétrica del gasto público.
+
+![](images/breakdown_panel_4_hogares_xgb.png)
+
+# Limitaciones y Cuidados Metodológicos
+
+Ningún pipeline predictivo, por más optimizado que esté, es una varita mágica. Para que este modelo sea una herramienta de simulación legítima y ética en políticas públicas, es fundamental delimitar con honestidad intelectual sus fronteras analíticas.
+
+A continuación, se detallan las limitaciones estructurales de la fuente de datos, los riesgos de sesgo y los cuidados metodológicos que deben tenerse en cuenta al interpretar los resultados de este estudio.
+
+## El Sesgo Urbano de la Encuesta Base (EPH)
+
+La Encuesta Permanente de Hogares (EPH) del INDEC es, por diseño, una encuesta representativa de los **principales aglomerados urbanos** del país (cubriendo aproximadamente al 70% de la población urbana de Argentina).
+
+> **Implicancia directa:** Las realidades de la pobreza rural dispersa, las economías extrapampeanas de pequeña escala y las zonas de baja densidad poblacional quedan completamente fuera del bucle predictivo del modelo. Los determinantes de la pobreza multidimensional en el ámbito rural (como el aislamiento geográfico o la falta de conectividad vial) difieren radicalmente de los urbanos. Por ende, **este modelo no debe extrapolarse bajo ningún concepto a poblaciones no metropolitanas.**
+
+## Solapamiento Conceptual y Endogeneidad Predictiva
+
+Un desafío metodológico crítico al predecir el Índice de Pobreza Multidimensional (IPM) con datos de la misma encuesta es el **solapamiento conceptual**.
+
+Muchos de los predictores del modelo (como las características físicas de la vivienda o el nivel educativo del jefe de hogar) están estrechamente emparentados con los criterios de privación que definen al propio IPM bajo el método Alkire-Foster. Esto genera un riesgo latente de circularidad o endogeneidad (explicar la variable *target* con variables que son casi idénticas a ella).
+
+- **Medida de mitigación aplicada:** Se implementó una prueba de estrés estructural en el script `06_robustness_analysis.R` (excluyendo de forma intencionada variables clave de educación y re-evaluando el modelo). Si bien el algoritmo demostró una resiliencia notable, las atribuciones locales de SHAP deben interpretarse con cautela, entendiendo que el modelo identifica *asociaciones altamente predictivas* y no necesariamente relaciones causales puras.
+
+## Rigidez Temporal del IPM frente a Shocks Macroeconómicos
+
+El IPM es, por definición, un índice de carácter **estructural y conservador**. Dimensiones como la calidad de los materiales de la vivienda o el acceso a cloacas cambian muy lentamente en el tiempo (requieren años de inversión en infraestructura).
+
+En contextos de alta volatilidad macroeconómica e inflación como el argentino, pueden ocurrir shocks de ingresos extremadamente veloces. Un hogar puede caer bajo la línea de pobreza monetaria de la noche a la mañana debido a una devaluación, pero sus indicadores estructurales de vivienda y saneamiento permanecerán intactos en el corto plazo.
+
+- **Cuidado interpretativo:** El modelo puede arrojar "falsos negativos" temporales si se lo evalúa con la lógica de la urgencia social diaria, ya que prioriza la vulnerabilidad estructural de mediano y largo plazo sobre la coyuntura del mes.
+
+## El Quiebre de Tendencia por Actualización Censal (2025)
+
+La transición metodológica que aplicó el INDEC en 2025 para migrar el marco muestral del Censo 2010 al Censo 2022 introdujo un ruido institucional ineludible. Aunque nuestro split cronológico demostró que la degradación del AUC-ROC fue mínima ($\Delta \approx 0.024$), este cambio introduce un sesgo de *data drift* (desplazamiento en la distribución de los datos).
+
+- **Recomendación:** Los coeficientes del modelo y las reglas de decisión de XGBoost deben actualizarse de manera periódica. Utilizar un modelo entrenado exclusivamente con el marco censal viejo para tomar decisiones en 2026 en adelante, sin un reentrenamiento continuo, erosionará la precisión del sistema de alerta temprana.
+
+## El Riesgo de Alucinación en Datos Sintéticos (SMOTE-NC)
+
+Para resolver el desbalanceo de clases, se optó por generar casos sintéticos de hogares en situación de pobreza multidimensional extrema mediante SMOTE-NC de manera externa. Aunque esta técnica es excelente para mejorar la sensibilidad del algoritmo, el algoritmo de vecinos cercanos puede "dibujar" combinaciones de variables que en la vida real son sociológicamente improbables (por ejemplo, un hogar con ingresos en el decil 10 pero sin acceso a agua potable y con hacinamiento crítico).
+
+- **Control de daños:** Para contrarrestar este fenómeno, se aplicó una reasignación estratificada de las variables técnicas (`codusu`, `pondera`, `grupo_cv`). Aun así, es vital recordar que los perfiles simulados por SMOTE-NC son aproximaciones estadísticas para equilibrar la frontera de decisión del clasificador, y no casos reales extraídos de la estructura social argentina.
+
+# Utilidad del Estudio y Aplicación en Políticas Públicas
+
+El verdadero valor de un modelo predictivo de aprendizaje automático en las ciencias sociales no radica únicamente en su precisión teórica, sino en su capacidad para transformarse en **tecnología social aplicada**. Este estudio abandona la pasividad de los diagnósticos retrospectivos para ofrecer una herramienta dinámica de simulación y planificación en territorio.
+
+A continuación, se delimitan las tres áreas de incidencia directa donde este modelo se constituye como un insumo crítico para la toma de decisiones:
+
+## Presupuestos de Alta Precisión y Focalización Quirúrgica
+
+Los esquemas tradicionales de asistencia social suelen basarse en la pobreza monetaria indirecta (línea de pobreza), la cual sufre de una alta volatilidad y genera un elevado nivel de "ruido" en la asignación de recursos.
+
+- **Optimización del Gasto:** Al utilizar un modelo de ensamble como **XGBoost altamente calibrado**, el Estado puede identificar de forma temprana qué hogares presentan un perfil de vulnerabilidad estructural inminente antes de que este se consolide.
+
+- **Eficiencia Fiscal:** La calibración probabilística del modelo ($t = 0.444$) permite a los ministerios de desarrollo social parametrizar los umbrales de intervención según la disponibilidad de caja. Se puede priorizar la cobertura (sensibilidad) en épocas de expansión presupuestaria o maximizar la selectividad (precisión) en periodos de consolidación fiscal, reduciendo a mínimos históricos la filtración de recursos públicos hacia sectores no vulnerables.
+
+## Un Sistema de Alerta Temprana ante el Data Drift y Quiebres de Tendencia
+
+Uno de los mayores desafíos de la gestión pública en contextos de alta inflación y transición institucional (como el cambio de marco muestral del INDEC en 2025) es la pérdida de vigencia de las estadísticas oficiales. Las encuestas de hogares tardan meses en procesarse y publicarse.
+
+- **Predicción Oportuna:** Al estructurar un pipeline robusto capaz de generalizar con una pérdida de performance marginal ($\Delta \approx 0.025$ de AUC-ROC) ante cambios de marcos censales, este modelo funciona como un **radar de resiliencia temporal**.
+
+- **Anticipación de Shocks:** Permite a los analistas simular escenarios de deterioro socioeconómico casi en tiempo real, proyectando cómo afectará un incremento en el desempleo o una aceleración inflacionaria regionalizada a la tasa de pobreza multidimensional de cada aglomerado, sin necesidad de esperar el cierre del semestre censal.
+
+## 3. Desmantelamiento de la "Caja Negra" para Diseños de Intervención Quirúrgica
+
+La IA Explicable (XAI) cambia radicalmente la forma en que los hacedores de políticas públicas interactúan con los datos de vulnerabilidad:
+
+- **De la Predicción a la Acción:** Saber *quién* va a ser pobre multidimensional es útil, pero saber *por qué* lo va a ser es lo que verdaderamente permite diseñar una solución. Al utilizar descomposiciones aditivas (como los *Break-Down Plots*), el modelo no se limita a arrojar un score de riesgo; detalla, por ejemplo, que en el Hogar X el factor determinante es el saneamiento deficitario (MCA), mientras que en el Hogar Y es el hacinamiento crítico y la informalidad de los ingresos.
+
+- **Microfocalización Sectorial:** Esto permite transicionar de programas de transferencias de ingresos genéricos y masivos (con alto costo y baja efectividad estructural) hacia esquemas de micro-intervenciones urbanísticas y habitacionales personalizadas, atacando la privación específica que ancla a cada familia bajo la línea de vulnerabilidad.
+
+> **Conclusión Metodológica:** Este marco de trabajo demuestra que la Inteligencia Artificial explicable y el modelado predictivo no son contrarios a la rigurosidad y la transparencia que exige el sector público. Por el contrario, proveen la precisión científica y la adaptabilidad necesarias para que las políticas sociales dejen de ser reactivas y pasen a ser preventivas, eficientes y profundamente humanas.
