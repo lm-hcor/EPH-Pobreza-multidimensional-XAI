@@ -1,0 +1,10 @@
+renv.lock
+renv/
+src/
+data/
+output/models/
+output/results/
+notebooks/*.ipynb
+.git/
+*.Rproj
+.Rproj.user/
