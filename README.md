@@ -1,6 +1,6 @@
 # EPH-Pobreza-Multidimensional-XAI 
 
-**App Shiny: https://lm-hcor.shinyapps.io/EPH-Pobreza-multidimensional-XAI/
+**App Shiny: https://lm-hcor.shinyapps.io/EPH-Pobreza-multidimensional-XAI/**
 
 > **Análisis de los determinantes de la pobreza multidimensional en Argentina: Una perspectiva regional e intertemporal con Inteligencia Artificial Explicable (2016-2025).**
 
