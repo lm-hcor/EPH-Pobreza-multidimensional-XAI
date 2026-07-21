@@ -173,3 +173,78 @@ This allows the identification of the main drivers behind individual predictions
 │ └── 07_xai_plots.R # SHAP, PDP and DALEX diagnostic visualizations
 │
 └── README.md
+
+
+---
+
+# 🚀 Technologies
+
+**Programming Language**
+
+- R 4.x
+
+**Machine Learning Ecosystem**
+
+- tidymodels
+- spatialsample
+- finetune
+- themis
+
+**Modeling Algorithms**
+
+- XGBoost
+- Random Forest
+- CART
+
+**Multivariate Analysis**
+
+- FactoMineR
+
+**Explainable AI**
+
+- DALEX
+- DALEXtra
+
+**Data Processing and Visualization**
+
+- tidyverse
+- ggplot2
+
+---
+
+# ⚠️ Limitations and Future Research
+
+Although the results demonstrate strong predictive performance, several limitations remain:
+
+## Conceptual Overlap Between Predictors and Target Variables
+
+Some predictors partially overlap conceptually with Alkire-Foster poverty dimensions, requiring cautious interpretation of local explanations.
+
+## Geographic Coverage Limitations
+
+The EPH survey focuses on Argentina’s main urban agglomerations, limiting inference regarding rural poverty dynamics.
+
+## Static Nature of Multidimensional Poverty Indicators
+
+Structural poverty indicators may not fully capture short-term economic shocks.
+
+## Need for Dynamic Data Integration
+
+Future developments should incorporate administrative records and longitudinal datasets to improve temporal adaptation and predictive accuracy.
+
+---
+
+# Author
+
+Luis Miguel Herrera Corrales
+
+Contact:
+lm.hcor@gmail.com
+
+GitHub | LinkedIn
+
+License: Apache 2.0
+
+Data source:
+Permanent Household Survey (EPH), INDEC Argentina.
+Data access follows Statistical Confidentiality Law 17.622.
