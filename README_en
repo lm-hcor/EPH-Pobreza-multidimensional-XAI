@@ -1,0 +1,175 @@
+# EPH-Multidimensional-Poverty-XAI
+
+Shiny App: https://lm-hcor.shinyapps.io/EPH-Pobreza-multidimensional-XAI/
+
+## Analysis of the Determinants of Multidimensional Poverty in Argentina: A Regional and Intertemporal Perspective Using Explainable Artificial Intelligence (2016-2025)
+
+This repository contains the source code, data architecture, and analytical pipeline developed for my Master’s Thesis.
+
+The study moves beyond traditional one-dimensional poverty measurements based exclusively on income by proposing a hybrid approach combining Machine Learning models and advanced Explainable Artificial Intelligence (XAI) techniques.
+
+The objective is to open the "black box" of predictive models and identify the structural determinants of social vulnerability in Argentina at the federal level.
+
+---
+
+# 🛠️ Methodology and Statistical Rigor
+
+To ensure that the model could be used as a simulation and decision-support tool for public policy analysis, the data ecosystem was designed under strict macroeconomic and statistical controls.
+
+## Regional and Intertemporal Income Deflation
+
+Nominal income flows (`itcf_real`, `p21_real`) were adjusted to constant prices using the Consumer Price Index (CPI) disaggregated across Argentina’s six major statistical regions.
+
+This approach reduces the bias introduced by national-level inflation averages in contexts of high regional inflation heterogeneity.
+
+## Multidimensional Poverty Index (MPI)
+
+A binary target variable (`mpi_pobre`) was constructed by adapting the Alkire-Foster methodology.
+
+The index integrates multiple deprivation dimensions:
+
+- Housing quality
+- Basic sanitation
+- Healthcare access (`priv_salud`)
+- Education
+
+## Post-Census Demographic Alignment
+
+Regional recalibration of sampling weights (`pondera`) was performed to approximate the demographic structure of the 2022 national census framework, reducing potential data drift between training and validation datasets.
+
+---
+
+# Prevention of Geographic and Temporal Data Leakage
+
+## Block Cross-Validation
+
+Urban clusters (`grupo_cv`) were grouped using `group_vfold_cv`.
+
+All observations belonging to the same urban agglomeration were strictly assigned either to the training or validation dataset, preserving spatial independence assumptions.
+
+## Chronological Time Splitting
+
+A strict separation was implemented between historical data (2016-2024, based on the 2010 Census framework) and the external validation dataset (2025, based on the 2022 Census framework).
+
+This approach allows the evaluation of model robustness under institutional and sampling framework changes.
+
+---
+
+# 🤖 Modeling Pipeline and Architecture Optimization
+
+The analytical pipeline was optimized using the `tidymodels` ecosystem to operate efficiently under strict hardware limitations (16GB RAM in Windows 11 environments), reducing total computational time to less than 16 hours.
+
+Pipeline:
+[Original Data]
+↓
+[Imputation / Dummy Encoding]
+↓
+[External SMOTE-NC]
+↓
+[MCA Dimensionality Reduction]
+↓
+[ANOVA Racing Cross-Validation]
+
+
+---
+
+# 1. Class Imbalance Correction (External SMOTE-NC)
+
+Due to the minority nature of extreme multidimensional poverty observations, SMOTE-NC (`themis`) was applied using an `over_ratio = 0.25`.
+
+### Critical optimization:
+
+To avoid the computational bottleneck caused by repeatedly calculating nearest-neighbor distances inside each cross-validation fold, SMOTE-NC was executed once externally on the preprocessed training matrix.
+
+Technical variables (`codusu`, `pondera`, `grupo_cv`) were synthetically reassigned through stratified sampling to preserve regional consistency.
+
+---
+
+# 2. Dimensionality Reduction (Multiple Correspondence Analysis)
+
+A dynamic Multiple Correspondence Analysis (MCA) approach was implemented using `FactoMineR`.
+
+The resulting latent coordinates (`mca_dim1`, `mca_dim2`) replaced highly correlated infrastructure variables, reducing multicollinearity and preventing artificial inflation of performance metrics.
+
+Variables introducing direct data leakage with the Multidimensional Poverty Index were excluded.
+
+---
+
+# 3. Hyperparameter Optimization Through Racing Methods (ANOVA Racing)
+
+Instead of exhaustive grid search, hyperparameter tuning was performed using ANOVA Race Tuning (`tune_race_anova` from the `finetune` package).
+
+The algorithm evaluates parameter configurations through restricted parallel processing at the resampling level (`parallel_over = "resamples"`) using 2 PSOCK workers.
+
+Inferior configurations are eliminated early after a burn-in phase of two folds, optimizing the Area Under the ROC Curve (AUC-ROC).
+
+---
+
+# 📈 Operational Performance Evaluation
+
+Models were evaluated using threshold-independent metrics and calibrated reliability curves.
+
+Classification thresholds were optimized according to the F1-score, prioritizing the optimal balance between:
+
+- Precision (reducing incorrect fiscal targeting)
+- Recall (maximizing social coverage)
+
+| Model | Engine | Calibrated Threshold (t) | AUC-ROC Test 2024 | AUC-ROC External 2025 | Probability Calibration |
+|---|---|---|---|---|---|
+| CART | rpart | 0.404 | 0.711 | 0.690 | Poor / Stepwise |
+| Random Forest | ranger | 0.430 | 0.863 | 0.838 | Systematic overestimation bias |
+| XGBoost | xgboost | 0.444 | 0.865 | 0.841 | Excellent / Near-perfect alignment |
+
+### Impact of the 2025 Census Framework Change
+
+The model detects a controlled structural performance degradation (`Δ ≈ 0.024 AUC`) in the external 2025 dataset, demonstrating the validity of chronological splitting for evaluating model resilience under institutional changes.
+
+### Calibration
+
+XGBoost was selected as the final model for social resource allocation simulations because its predicted probabilities closely match observed empirical frequencies, allowing outputs to be interpreted as household-level poverty risk probabilities.
+
+---
+
+# 🔍 Explainable AI Analysis (XAI)
+
+The repository applies `DALEX` and unified SHAP-based architectures to interpret ensemble model predictions and reduce algorithmic opacity.
+
+## Global SHAP Attributions
+
+Quantification of the contribution of:
+
+- MCA infrastructure dimensions
+- Real income shocks
+- Employment-related characteristics
+
+to household poverty risk predictions.
+
+## Break-Down Plots
+
+Four representative cases were analyzed:
+
+- Maximum predicted poverty probability
+- Minimum predicted poverty probability
+- Two borderline cases
+
+This allows the identification of the main drivers behind individual predictions.
+
+---
+
+# 📂 Repository Structure
+├── data/
+│ ├── raw/ # Raw EPH household survey microdata
+│ └── processed/ # Consolidated datasets with MCA coordinates and adjusted incomes
+│ |__ external/ # INDEC exchange data
+├── output/
+│ ├── models/ # Serialized model objects (best_xgb.rds, etc.)
+│ └── results/ # Calibration thresholds and robustness matrices
+│
+├── src/
+│ ├── 01_data_download.R # Automated EPH wave download through the 'eph' package
+│ ├── 02_deflactacion_mca.R # Preprocessing, regional deflation and MCA computation
+│ ├── 06c_optimized_modelling.R # Machine Learning pipeline (external SMOTE-NC + ANOVA Race)
+│ ├── 06_robustness_analysis.R # Structural stress tests
+│ └── 07_xai_plots.R # SHAP, PDP and DALEX diagnostic visualizations
+│
+└── README.md
